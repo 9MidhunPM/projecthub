@@ -1,0 +1,89 @@
+# Dokploy: Compose mode, Isolated Deployments enabled.
+# Add HTTPS domain projecthub.midhunpm.in -> web:3000 in Dokploy.
+# No fixed project/network/container names: Dokploy scopes these resources.
+services:
+  secrets-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.secrets
+    restart: "no"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - db_credentials:/run/projecthub-secrets
+      - postgres_data:/var/lib/projecthub-db:ro
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: projecthub
+      POSTGRES_PASSWORD_FILE: /run/projecthub-secrets/postgres-password
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_DB: projecthub
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - db_credentials:/run/projecthub-secrets:ro
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U projecthub -d projecthub"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    entrypoint: ["node", "/app/docker/with-db-secret.cjs"]
+    command: ["npm", "run", "db:migrate"]
+    volumes:
+      - db_credentials:/run/projecthub-secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+  api:
+    entrypoint: ["node", "/app/docker/with-db-secret.cjs"]
+    command: ["npm", "run", "start", "-w", "@projecthub/api"]
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      WEB_ORIGIN: https://projecthub.midhunpm.in
+      COOKIE_SECURE: "true"
+      UPLOAD_DIR: /app/apps/api/uploads
+    volumes:
+      - uploads:/app/apps/api/uploads
+      - db_credentials:/run/projecthub-secrets:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose: ["4000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        API_INTERNAL_URL: http://api:4000
+        NODE_BUILD_OPTIONS: --max-old-space-size=1536
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    expose: ["3000"]
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  db_credentials:
+  postgres_data:
+  uploads:

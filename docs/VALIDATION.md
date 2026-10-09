@@ -42,3 +42,10 @@ Frontend production build and TypeScript check were separately reported successf
 A comprehensive desktop/mobile Playwright workflow was prepared, but **no browser workflow passed and no rendered screenshots were captured**. Installed Chromium failed before page creation because the environment prohibited a required local Unix socket (`process_singleton_posix.cc: socket() failed: Operation not permitted`). Reviewed elevated execution produced the same failure. The supported cloud browser could not reach the isolated server (`ERR_CONNECTION_REFUSED`); recovery was then rejected by its URL policy. These restrictions were not bypassed. No Firefox or headless-shell alternative was installed.
 
 Consequently, HTTP checks prove application routes and server workflows, not client-side interaction correctness, responsive layout, absence of browser-console errors, or fidelity to the concept images. The concept images are design references, not screenshots of the running product. Run the manual acceptance checklist in a supported local browser before release.
+
+## Deployment credential bootstrap checks
+
+- `node --check` passed for both container-side credential scripts.
+- `node --test docker/secret-bootstrap.test.cjs`: 6 passed, 0 failed, using deterministic in-memory fixtures. No actual database credential was generated during these tests.
+- Dedicated Dokploy Compose YAML parsed; five services, no host ports, required initialization/migration dependency gates, read-only secret consumers, and absence of credential values in configuration were checked.
+- Actual container execution, UID ownership behavior, and approved public deployment remain runtime checks; mocked tests do not establish those outcomes.
