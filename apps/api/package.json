@@ -1,0 +1,40 @@
+{
+  "name": "@projecthub/api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsc && concurrently -k \"tsc --watch --preserveWatchOutput\" \"node --watch dist/main.js\"",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --import tsx --test test/*.test.ts",
+    "prisma:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:seed": "node --import tsx prisma/seed.ts",
+    "start:prod": "node dist/main.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/platform-express": "^11.1.6",
+    "@prisma/client": "^6.19.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "cookie-parser": "^1.4.7",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "sharp": "^0.34.4"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.9",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^22.18.0",
+    "prisma": "^6.19.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

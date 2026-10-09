@@ -1,0 +1,25 @@
+{
+  "name": "projecthub",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22 <25",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"npm run dev -w @projecthub/api\" \"npm run dev -w @projecthub/web\"",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:generate": "npm run prisma:generate -w @projecthub/api",
+    "db:migrate": "npm run db:migrate -w @projecthub/api",
+    "db:seed": "npm run db:seed -w @projecthub/api"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.1"
+  }
+}
