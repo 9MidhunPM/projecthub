@@ -1,0 +1,101 @@
+generator client {
+ provider = "prisma-client-js"
+}
+datasource db {
+ provider = "postgresql"
+ url = env("DATABASE_URL")
+}
+enum Role {
+ STUDENT
+ FACULTY
+ ADMIN
+}
+enum ProjectStatus {
+ DRAFT
+ PENDING
+ APPROVED
+ CHANGES_REQUESTED
+ HIDDEN
+}
+model User {
+ id String @id @default(cuid())
+ email String @unique
+ passwordHash String
+ name String
+ role Role @default(STUDENT)
+ department String
+ semester Int
+ bio String @default("")
+ createdAt DateTime @default(now())
+ sessions Session[]
+ projects Project[]
+ likes Like[]
+ bookmarks Bookmark[]
+}
+model Session {
+ id String @id
+ userId String
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ expiresAt DateTime
+ @@index([expiresAt])
+}
+model Project {
+ id String @id @default(cuid())
+ title String
+ description String
+ department String
+ semester Int
+ type String
+ techStack String[]
+ teamMembers String[]
+ githubUrl String @default("")
+ demoUrl String @default("")
+ screenshots String[]
+ status ProjectStatus @default(DRAFT)
+ feedback String @default("")
+ views Int @default(0)
+ ownerId String
+ owner User @relation(fields:[ownerId],references:[id],onDelete:Cascade)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ likes Like[]
+ bookmarks Bookmark[]
+ viewEvents ViewEvent[]
+ @@index([status,createdAt])
+ @@index([department,semester])
+}
+model Like {
+ userId String
+ projectId String
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ project Project @relation(fields:[projectId],references:[id],onDelete:Cascade)
+ @@id([userId,projectId])
+}
+model Bookmark {
+ userId String
+ projectId String
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ project Project @relation(fields:[projectId],references:[id],onDelete:Cascade)
+ @@id([userId,projectId])
+}
+model ViewEvent {
+ projectId String
+ visitor String
+ day String
+ project Project @relation(fields:[projectId],references:[id],onDelete:Cascade)
+ @@id([projectId,visitor,day])
+}
+model Audit {
+ id String @id @default(cuid())
+ actorId String
+ action String
+ targetId String
+ details String
+ createdAt DateTime @default(now())
+}
+model Upload {
+ filename String @id
+ ownerId String
+ createdAt DateTime @default(now())
+ @@index([ownerId])
+}
