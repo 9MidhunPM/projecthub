@@ -21,5 +21,10 @@
   },
   "devDependencies": {
     "concurrently": "9.2.1"
+  },
+  "overrides": {
+    "concurrently": {
+      "shell-quote": "1.12.0"
+    }
   }
 }

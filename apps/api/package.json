@@ -26,7 +26,7 @@
     "helmet": "^8.1.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "sharp": "^0.34.4"
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.9",
