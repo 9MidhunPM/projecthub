@@ -144,6 +144,16 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
     assert.match(response.headers.get('set-cookie'), /SameSite=Lax/i);
     return response.data;
   }
+  function assertPage(response, { total, page, limit }) {
+    assert.equal(response.status, 200);
+    assert(Array.isArray(response.data.items));
+    assert.equal(response.data.total, total);
+    assert.equal(response.data.page, page);
+    assert.equal(response.data.limit, limit);
+    assert.equal(response.data.pages, Math.ceil(total / limit));
+    assert(response.data.items.length <= limit, 'Collection responses must remain bounded.');
+    assert.match(response.headers.get('cache-control'), /no-store/);
+  }
 
   await t.test('HTML routes and static assets load with frontend security headers', async () => {
     const nextAssets = new Set();
@@ -272,7 +282,7 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
       assert.equal((await other.request(`/api/projects/${project.id}/bookmark`, { method: 'PUT', body: {} })).data.bookmarked, true);
       assert.equal((await anonymous.request(`/api/projects/${project.id}/view`, { method: 'POST', body: {} })).data.views, 1);
     }
-    assert((await other.request('/api/my/bookmarks')).data.some(item => item.id === project.id));
+    assert((await other.request('/api/my/bookmarks')).data.items.some(item => item.id === project.id));
     assert.equal((await other.request(`/api/projects/${project.id}`)).data.liked, true);
     assert.equal((await anonymous.request(`/api/projects/${project.id}`)).data.liked, false);
     assert.equal((await other.request(`/api/projects/${project.id}/like`, { method: 'DELETE' })).data.likes, 0);
@@ -286,8 +296,139 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
     assert.equal((await admin.request(`/api/admin/users/${otherUser.id}/role`, { method: 'PATCH', body: { role: 'STUDENT' } })).data.role, 'STUDENT');
     const audit = await admin.request('/api/admin/audit');
     assert.equal(audit.status, 200);
-    assert(audit.data.some(entry => entry.action === 'CHANGE_ROLE' && entry.targetId === otherUser.id));
-    assert(audit.data.some(entry => entry.action === 'MODERATE_PROJECT' && entry.targetId === project.id));
+    assert(audit.data.items.some(entry => entry.action === 'CHANGE_ROLE' && entry.targetId === otherUser.id));
+    assert(audit.data.items.some(entry => entry.action === 'MODERATE_PROJECT' && entry.targetId === project.id));
+  });
+
+  await t.test('private collections paginate completely and keep ownerwide summary counts', async () => {
+    const statuses = ['DRAFT', 'PENDING', 'APPROVED', 'CHANGES_REQUESTED', 'HIDDEN'];
+    const rows = statuses.flatMap(status => Array.from({ length: 5 }, (_unused, index) => ({
+      ...projectBody,
+      id: `c${randomUUID().replaceAll('-', '').slice(0, 24)}`,
+      title: `Collection fixture ${status} ${index}`,
+      screenshots: [],
+      ownerId: ownerUser.id,
+      status,
+    })));
+    await db.project.createMany({ data: rows });
+    const privateOther = await db.project.create({ data: { ...projectBody, title: 'Other account private collection fixture', screenshots: [], ownerId: otherUser.id } });
+    const expectedIds = new Set([project.id, ...rows.map(row => row.id)]);
+    const summary = { total: 26, published: 6, pending: 5, byStatus: { DRAFT: 5, PENDING: 5, APPROVED: 6, CHANGES_REQUESTED: 5, HIDDEN: 5 } };
+    const first = await owner.request('/api/my/projects');
+    assertPage(first, { total: 26, page: 1, limit: 24 });
+    assert.equal(first.data.items.length, 24);
+    assert.deepEqual(first.data.summary, summary);
+    const seen = new Set();
+    for (let page = 1; page <= 6; page++) {
+      const response = await owner.request(`/api/my/projects?page=${page}&limit=5`);
+      assertPage(response, { total: 26, page, limit: 5 });
+      for (const item of response.data.items) {
+        assert.equal(item.ownerId, ownerUser.id);
+        assert(!seen.has(item.id), 'Stable pages must not repeat a project.');
+        seen.add(item.id);
+      }
+    }
+    assert.deepEqual(seen, expectedIds);
+    assert(!seen.has(privateOther.id));
+    const filtered = await owner.request('/api/my/projects?status=DRAFT&page=2&limit=2');
+    assertPage(filtered, { total: 5, page: 2, limit: 2 });
+    assert(filtered.data.items.every(item => item.status === 'DRAFT'));
+    assert.deepEqual(filtered.data.summary, summary, 'Summary must describe all owner projects, not just the filtered page.');
+    const empty = await owner.request('/api/my/projects?status=DRAFT&page=4&limit=2');
+    assertPage(empty, { total: 5, page: 4, limit: 2 });
+    assert.deepEqual(empty.data.items, []);
+    assert.equal((await owner.request('/api/my/projects?limit=49')).status, 400);
+    assert.equal((await owner.request('/api/my/projects?page=1&page=2')).status, 400);
+
+    const bookmarkRows = rows.filter(row => ['APPROVED', 'HIDDEN'].includes(row.status));
+    await db.bookmark.createMany({ data: bookmarkRows.map(row => ({ userId: otherUser.id, projectId: row.id })) });
+    const bookmarked = new Set();
+    for (let page = 1; page <= 3; page++) {
+      const response = await other.request(`/api/my/bookmarks?page=${page}&limit=2`);
+      assertPage(response, { total: 5, page, limit: 2 });
+      for (const item of response.data.items) {
+        assert.equal(item.status, 'APPROVED');
+        assert.equal(item.bookmarked, true);
+        assert(!bookmarked.has(item.id));
+        bookmarked.add(item.id);
+      }
+    }
+    assert.deepEqual(bookmarked, new Set(rows.filter(row => row.status === 'APPROVED').map(row => row.id)));
+    assertPage(await owner.request('/api/my/bookmarks'), { total: 0, page: 1, limit: 24 });
+    assert.equal((await other.request('/api/my/bookmarks?status=HIDDEN')).status, 400);
+
+    const pendingCount = await db.project.count({ where: { status: 'PENDING' } });
+    const firstPending = await faculty.request('/api/moderation/projects?limit=2');
+    const secondPending = await faculty.request('/api/moderation/projects?limit=2&page=2');
+    assertPage(firstPending, { total: pendingCount, page: 1, limit: 2 });
+    assertPage(secondPending, { total: pendingCount, page: 2, limit: 2 });
+    assert(firstPending.data.items.every(item => item.status === 'PENDING'));
+    assert(secondPending.data.items.every(item => item.status === 'PENDING'));
+    const firstIds = new Set(firstPending.data.items.map(item => item.id));
+    assert(secondPending.data.items.every(item => !firstIds.has(item.id)));
+    assert.equal((await faculty.request('/api/moderation/projects?status=INVALID')).status, 400);
+  });
+
+  await t.test('administrators can page and search users beyond the former 500-account cutoff', async () => {
+    const marker = `directory-${nonce}`;
+    const rows = Array.from({ length: 501 }, (_unused, index) => ({
+      id: `c${randomUUID().replaceAll('-', '').slice(0, 24)}`,
+      name: `${marker} account ${String(index).padStart(3, '0')}`,
+      email: `${marker}-${index}@projecthub.test`,
+      passwordHash: 'fictional-pagination-fixture-not-an-authentication-hash',
+      department: 'Computer Science',
+      semester: 4,
+      role: index === 0 ? 'FACULTY' : 'STUDENT',
+      createdAt: new Date(Date.UTC(2020, 0, 1, 0, 0, index)),
+    }));
+    users.push(...rows.map(row => row.id));
+    await db.user.createMany({ data: rows });
+    const first = await admin.request(`/api/admin/users?q=${marker}`);
+    assertPage(first, { total: 501, page: 1, limit: 50 });
+    assert.equal(first.data.items.length, 50);
+    assert(!first.data.items.some(item => item.id === rows[0].id));
+    assert(first.data.items.every(item => item.passwordHash === undefined));
+    const last = await admin.request(`/api/admin/users?q=${marker}&page=6&limit=100`);
+    assertPage(last, { total: 501, page: 6, limit: 100 });
+    assert.equal(last.data.items.length, 1);
+    assert.equal(last.data.items[0].id, rows[0].id);
+    const search = await admin.request(`/api/admin/users?q=${encodeURIComponent(rows[0].email.toUpperCase())}`);
+    assertPage(search, { total: 1, page: 1, limit: 50 });
+    assert.equal(search.data.items[0].id, rows[0].id);
+    const filtered = await admin.request(`/api/admin/users?q=${marker}&role=FACULTY`);
+    assertPage(filtered, { total: 1, page: 1, limit: 50 });
+    assert.equal(filtered.data.items[0].id, rows[0].id);
+    const empty = await admin.request(`/api/admin/users?q=${marker}&page=7&limit=100`);
+    assertPage(empty, { total: 501, page: 7, limit: 100 });
+    assert.deepEqual(empty.data.items, []);
+    assert.equal((await admin.request('/api/admin/users?limit=101')).status, 400);
+    assert.equal((await admin.request('/api/admin/users?q[0]=unexpected')).status, 400);
+    assert.equal((await owner.request(`/api/admin/users?q=${marker}`)).status, 403);
+  });
+
+  await t.test('audit history returns bounded pages without hiding the final records', async () => {
+    await db.audit.createMany({ data: Array.from({ length: 57 }, (_unused, index) => ({
+      actorId: ownerUser.id,
+      action: 'CHANGE_ROLE',
+      targetId: otherUser.id,
+      details: JSON.stringify({ role: 'STUDENT', fixture: index }),
+      createdAt: new Date(Date.UTC(2020, 0, 1, 0, 0, index)),
+    })) });
+    const total = await db.audit.count();
+    const first = await admin.request('/api/admin/audit');
+    assertPage(first, { total, page: 1, limit: 50 });
+    assert.equal(first.data.items.length, 50);
+    const lastPage = Math.ceil(total / 50);
+    const last = await admin.request(`/api/admin/audit?page=${lastPage}`);
+    assertPage(last, { total, page: lastPage, limit: 50 });
+    assert.equal(last.data.items.length, total - (lastPage - 1) * 50);
+    const firstIds = new Set(first.data.items.map(item => item.id));
+    assert(last.data.items.every(item => !firstIds.has(item.id)));
+    const empty = await admin.request(`/api/admin/audit?page=${lastPage + 1}`);
+    assertPage(empty, { total, page: lastPage + 1, limit: 50 });
+    assert.deepEqual(empty.data.items, []);
+    assert.equal((await admin.request('/api/admin/audit?q=unsupported')).status, 400);
+    assert.equal((await faculty.request('/api/admin/audit')).status, 403);
   });
 
   await t.test('hiding a project revokes public detail, listing, and image access', async () => {
