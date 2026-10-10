@@ -47,3 +47,22 @@ Do not run mixed old/new upload handlers. Old binaries do not understand PENDING
 Account quotas do not cap total installation storage, unlimited new-account creation, historical orphan files, filesystem metadata overhead, or externally added files. Monitor global free space/inodes and apply infrastructure quotas separately. Multiple API instances need the same durable upload storage as well as the same database. Restrict filesystem writers to the service and trusted operators; database/filesystem transactions cannot protect against arbitrary external replacement of paths.
 
 A future backfill should measure regular files on a stable copy first, preserve unknown-size exceptions, and update metadata only after a separate authorization and validation plan. Future cleanup requires an explicit retention/recovery policy, all-status project-reference checks, and protection for active uploads and unsaved editors. A missing project reference alone is not permission to delete an image: files can be reused in multiple projects or held by an editor that has not saved yet.
+
+## Read-only inventory on an isolated copy
+
+The inventory command deliberately accepts only a loopback PostgreSQL database named `projecthub_test` or `projecthub_test_<suffix>` and refuses `NODE_ENV=production`. It does not fall back to ambient `DATABASE_URL`. Use a separately authorized, isolated restored database and matching upload-volume copy; do not point it at live production. No mutating backfill or cleanup command is included.
+
+Build the API, securely supply the local copy's connection URL through `INVENTORY_DATABASE_URL`, and run from the repository root:
+
+```sh
+node apps/api/dist/upload-inventory.js \
+  --database-url-env INVENTORY_DATABASE_URL \
+  --upload-dir /absolute/isolated/upload-copy \
+  --batch-size 100 > upload-inventory.jsonl
+```
+
+Do not place credentials directly in command arguments or saved reports. Prefer a database role with SELECT-only access; the command additionally forces read-only PostgreSQL transactions, a 15-second statement timeout, and one connection. Batches default to 100 and cannot exceed 500. Rows and directory entries stream as JSON Lines with output backpressure, so the command does not accumulate the full installation in memory. It performs per-file reference queries and can take time on large copies. The report contains storage identifiers and should be treated as private operational data.
+
+Each Upload record reports a safe filename, state, creation time, decimal recorded/observed byte counts, owner existence, reference count, and anomalies. Large byte totals are strings to avoid JavaScript precision loss. Reference counts include projects in every status and count projects containing the exact upload URL, rather than duplicate array entries. The directory pass also reports untracked files, referenced files without Upload rows, symlinks, and unrecognized entries. Unsafe names are hashed instead of printed or traversed; file contents and owner IDs are never included. Files are inspected with `lstat`, never decoded, and symlinks are not intentionally followed. The upload directory and every parent must be real directories without symlinks.
+
+Keep the copy and its parent directories stable during the scan. This is a best-effort observation across separate reads, not an atomic database/filesystem snapshot, and pathname checks cannot eliminate concurrent directory replacement. Accept a report as complete only when the command exits 0 **and** its final summary contains `complete:true`. Any partial output after failure is incomplete. Review anomalies before planning a separately authorized metadata backfill or retention policy; the report itself authorizes no mutations.
