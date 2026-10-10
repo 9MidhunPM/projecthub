@@ -4,7 +4,7 @@ import {useEffect, useRef, useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {ArrowLeft, Save, Send, Trash2} from 'lucide-react';
-import {api, Project, departments, projectTypes, isAbortError} from '@/lib/api';
+import {api, ApiError, Project, departments, projectTypes, isAbortError} from '@/lib/api';
 import {projectPayload, ProjectForm, projectToForm, validateProjectForm} from '@/lib/project-form';
 import {Guard, useApp, ErrorMessage, Loading} from './shell';
 import {ScreenshotEditor} from './screenshot-editor';
@@ -20,6 +20,8 @@ function Editor({id}: {id?: string}) {
   const [screenshots, setScreenshots] = useState<string[]>([]);
   const [loading, setLoading] = useState(Boolean(id));
   const [loadError, setLoadError] = useState('');
+  const [loadId, setLoadId] = useState(id);
+  const [conflict, setConflict] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<SaveAction | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -30,6 +32,7 @@ function Editor({id}: {id?: string}) {
   const mounted = useRef(true);
   const mutation = useRef<AbortController | null>(null);
   const savedId = useRef(id);
+  const savedVersion = useRef<number | undefined>(undefined);
   const errorSummary = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,20 +41,22 @@ function Editor({id}: {id?: string}) {
   }, []);
 
   useEffect(() => {
-    if (!id) return;
+    if (!loadId) return;
     const controller = new AbortController();
     setLoading(true);
     setLoadError('');
-    api<Project>(`/projects/${id}`, {signal: controller.signal}).then(project => {
+    api<Project>(`/projects/${loadId}`, {signal: controller.signal}).then(project => {
       if (controller.signal.aborted) return;
       setOriginal(project);
+      savedId.current = project.id;
+      savedVersion.current = project.version;
       setForm(projectToForm(project));
       setScreenshots(project.screenshots);
     }).catch(failure => {
       if (!controller.signal.aborted && !isAbortError(failure)) setLoadError(failure.message);
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [id, retry]);
+  }, [loadId, retry]);
 
   useEffect(() => { if (error) errorSummary.current?.focus(); }, [error]);
   const update = (key: keyof ProjectForm, value: string) => setForm(previous => ({...previous, [key]: value}));
@@ -68,23 +73,26 @@ function Editor({id}: {id?: string}) {
     setBusy(action);
     setError('');
     setSavedDraft(false);
+    setConflict(false);
     try {
       const currentId = savedId.current;
       const saved = await api<Project>(currentId ? `/projects/${currentId}` : '/projects', {
-        method: currentId ? 'PATCH' : 'POST', body: JSON.stringify(projectPayload(form, screenshots)), signal: controller.signal,
+        method: currentId ? 'PATCH' : 'POST', body: JSON.stringify({...projectPayload(form, screenshots), ...(currentId ? {expectedVersion: savedVersion.current} : {})}), signal: controller.signal,
       });
       if (!mounted.current || controller.signal.aborted) return;
       // Keep the created ID before submission. Retrying a failed second step
       // must update this draft instead of creating another project.
       savedId.current = saved.id;
+      savedVersion.current = saved.version;
       setOriginal(saved);
       if (action === 'submit') {
         try {
-          await api(`/projects/${saved.id}/submit`, {method: 'POST', signal: controller.signal});
+          await api(`/projects/${saved.id}/submit`, {method: 'POST', body: JSON.stringify({expectedVersion: saved.version}), signal: controller.signal});
           if (!mounted.current || controller.signal.aborted) return;
         } catch (failure) {
           if (!mounted.current || isAbortError(failure)) return;
           setSavedDraft(true);
+          setConflict(failure instanceof ApiError && failure.status === 409);
           setError(`Your draft was saved, but it could not be submitted: ${(failure as Error).message}`);
           return;
         }
@@ -92,7 +100,10 @@ function Editor({id}: {id?: string}) {
       notify(action === 'submit' ? 'Project submitted for review.' : 'Draft saved.');
       router.push('/workspace');
     } catch (failure) {
-      if (mounted.current && !isAbortError(failure)) setError((failure as Error).message);
+      if (mounted.current && !isAbortError(failure)) {
+        setError((failure as Error).message);
+        setConflict(failure instanceof ApiError && failure.status === 409);
+      }
     } finally {
       pending.current = false;
       mutation.current = null;
@@ -109,17 +120,30 @@ function Editor({id}: {id?: string}) {
     setBusy('delete');
     setError('');
     try {
-      await api(`/projects/${currentId}`, {method: 'DELETE', signal: controller.signal});
+      await api(`/projects/${currentId}`, {method: 'DELETE', body: JSON.stringify({expectedVersion: savedVersion.current}), signal: controller.signal});
       if (!mounted.current || controller.signal.aborted) return;
       notify('Project deleted.');
       router.push('/workspace');
     } catch (failure) {
-      if (mounted.current && !isAbortError(failure)) setError((failure as Error).message);
+      if (mounted.current && !isAbortError(failure)) {
+        setError((failure as Error).message);
+        setConflict(failure instanceof ApiError && failure.status === 409);
+      }
     } finally {
       pending.current = false;
       mutation.current = null;
       if (mounted.current) setBusy(null);
     }
+  }
+
+  function reloadLatest() {
+    if (!savedId.current || pending.current || uploading) return;
+    if (!window.confirm('Reload the latest project? This replaces your unsaved changes with the current server version.')) return;
+    setError('');
+    setConflict(false);
+    setSavedDraft(false);
+    setLoadId(savedId.current);
+    setRetry(value => value + 1);
   }
 
   if (loading) return <Loading message="Loading your project…"/>;
@@ -134,7 +158,7 @@ function Editor({id}: {id?: string}) {
         <div className="editor-grid">
           <section className="form-panel">
             <h2>Project details</h2>
-            <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage message={error}/>{savedDraft && <Link className="text-link" href="/workspace">Find your saved draft in My workspace</Link>}</div>
+            <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage message={error}/>{conflict && <div className="conflict-recovery"><p>Your edits are still here. Copy any changes you want to keep before loading the latest version.</p><button type="button" className="button" onClick={reloadLatest}>Reload latest project</button></div>}{savedDraft && <Link className="text-link" href="/workspace">Find your saved draft in My workspace</Link>}</div>
             {original && ['APPROVED', 'PENDING'].includes(original.status) && <div className="review-note">Saving edits returns this project to draft and removes it from Explore until it is approved again.</div>}
             <label>Project title<input name="title" required minLength={3} maxLength={120} value={form.title} onChange={event => update('title', event.target.value)} placeholder="Give your project a clear, memorable name"/></label>
             <label><span id="description-label">Description</span><textarea aria-labelledby="description-label" name="description" required minLength={20} maxLength={20000} rows={7} value={form.description} onChange={event => update('description', event.target.value)} aria-describedby="description-hint" placeholder="What problem does it solve? What did you build, and what did you learn?"/><small id="description-hint">20–20,000 characters. Make it understandable to someone seeing it for the first time. {form.description.length.toLocaleString()} used.</small></label>

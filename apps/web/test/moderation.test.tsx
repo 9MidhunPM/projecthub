@@ -20,7 +20,8 @@ function queueFetch(mutate: (options: RequestInit | undefined) => Promise<Respon
 
 test('requesting changes requires feedback, focuses the field, and preserves it after conflict', async () => {
   let reviews = 0;
-  queueFetch(async () => { reviews += 1; return Response.json({message: 'The project changed. Refresh and try again.'}, {status: 409}); });
+  const versions: number[] = [];
+  queueFetch(async options => { reviews += 1; versions.push(JSON.parse(String(options?.body)).expectedVersion); return Response.json({message: 'The project changed. Refresh and try again.'}, {status: 409}); });
   const view = renderApp(<Moderation/>);
   await waitFor(() => assert.ok(view.getByRole('button', {name: 'Request changes'})));
   fireEvent.click(view.getByRole('button', {name: 'Request changes'}));
@@ -31,6 +32,9 @@ test('requesting changes requires feedback, focuses the field, and preserves it 
   fireEvent.click(view.getByRole('button', {name: 'Request changes'}));
   await waitFor(() => assert.ok(view.getByRole('button', {name: 'Refresh this queue'})));
   assert.equal(field.value, 'Please add a screenshot.');
+  assert.deepEqual(versions, [project.version]);
+  fireEvent.click(view.getByRole('button', {name: 'Request changes'}));
+  await waitFor(() => assert.deepEqual(versions, [project.version, project.version]));
 });
 
 test('publishing can be cancelled and repeated approval clicks issue one request', async () => {

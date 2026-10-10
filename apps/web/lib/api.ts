@@ -26,6 +26,7 @@ export type Project = {
   demoUrl?: string | null;
   screenshots: string[];
   status: ProjectStatus;
+  version: number;
   feedback?: string | null;
   views: number;
   createdAt: string;

@@ -45,7 +45,7 @@ function ReviewQueue() {
     setBusy({id: project.id, decision});
     setItemErrors(previous => ({...previous, [project.id]: {message: '', conflict: false}}));
     try {
-      await api(`/moderation/projects/${project.id}`, {method: 'PATCH', body: JSON.stringify({status: decision, feedback: text || ''}), signal: controller.signal});
+      await api(`/moderation/projects/${project.id}`, {method: 'PATCH', body: JSON.stringify({status: decision, feedback: text || '', expectedVersion: project.version}), signal: controller.signal});
       if (controller.signal.aborted) return;
       setData(previous => previous?.filter(item => item.id !== project.id) ?? null);
       setFeedback(previous => { const next = {...previous}; delete next[project.id]; return next; });
