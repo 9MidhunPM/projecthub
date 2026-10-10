@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "node ../../scripts/run-tests.cjs api unit",
+    "test": "npm run build && node ../../scripts/run-tests.cjs api unit",
     "test:integration": "npm run build && node ../../scripts/run-tests.cjs api integration",
     "prisma:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
