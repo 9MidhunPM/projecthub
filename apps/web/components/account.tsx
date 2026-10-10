@@ -1,8 +1,10 @@
 'use client';
 
 import {useEffect, useRef, useState} from 'react';
-import {api, User, departments, initials, isAbortError} from '@/lib/api';
+import {api, Page, User, departments, initials, isAbortError} from '@/lib/api';
 import {useApiResource} from '@/lib/use-api-resource';
+import {useCollectionQuery} from '@/lib/use-collection-query';
+import {Pagination} from './pagination';
 import {Guard, useApp, ErrorMessage, Loading} from './shell';
 
 export function Profile() { return <Guard><ProfileForm/></Guard>; }
@@ -60,17 +62,29 @@ function ProfileForm() {
   </div>;
 }
 
+const peopleQueryOptions = {people: true};
+
 export function Admin() { return <Guard roles={['ADMIN']}><AdminContent/></Guard>; }
 
 function AdminContent() {
   const {user, notify} = useApp();
-  const {data: users, error: loadError, loading, reload, setData} = useApiResource<User[]>('/admin/users');
+  const {query, ready, change: changeQuery} = useCollectionQuery('/admin', peopleQueryOptions);
+  const {data: users, error: loadError, loading, reload, setData} = useApiResource<Page<User>>(ready ? `/admin/users?${new URLSearchParams({page: String(query.page), limit: '25', ...(query.q ? {q: query.q} : {}), ...(query.role ? {role: query.role} : {})})}` : null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [search, setSearch] = useState('');
-  const [role, setRole] = useState('');
   const request = useRef<AbortController | null>(null);
-  const visible = users?.filter(account => `${account.name} ${account.email}`.toLowerCase().includes(search.trim().toLowerCase()) && (!role || role === account.role)) ?? [];
+  const visible = users?.items ?? [];
+
+  useEffect(() => { setSearch(query.q); }, [query.q]);
+  useEffect(() => {
+    if (!ready || search.trim() === query.q) return;
+    const timer = window.setTimeout(() => changeQuery({q: search, page: 1}, 'replace'), 250);
+    return () => window.clearTimeout(timer);
+  }, [search, query.q, ready, changeQuery]);
+  useEffect(() => {
+    if (users && !loading && !loadError && query.page > Math.max(1, users.pages)) changeQuery({page: Math.max(1, users.pages)}, 'replace');
+  }, [users, loading, loadError, query.page, changeQuery]);
 
   useEffect(() => () => { request.current?.abort(); }, []);
 
@@ -84,7 +98,8 @@ function AdminContent() {
     try {
       const updated = await api<User>(`/admin/users/${target.id}/role`, {method: 'PATCH', body: JSON.stringify({role: nextRole}), signal: controller.signal});
       if (controller.signal.aborted) return;
-      setData(previous => previous?.map(account => account.id === target.id ? updated : account) ?? null);
+      setData(previous => previous ? {...previous, items: previous.items.flatMap(account => account.id !== target.id ? [account] : !query.role || updated.role === query.role ? [updated] : [])} : previous);
+      reload();
       notify(`${target.name}'s role is now ${nextRole.toLowerCase()}.`);
     } catch (failure) {
       if (!controller.signal.aborted && !isAbortError(failure)) setError((failure as Error).message);
@@ -98,16 +113,16 @@ function AdminContent() {
     <ErrorMessage message={loadError || error}/>
     {loadError && <div className="results-recovery"><button className="button" onClick={reload}>Try again</button></div>}
     <div className="people-filters">
-      <label className="people-search">Find a person<input type="search" placeholder="Search by name or email" aria-label="Search users" value={search} onChange={event => setSearch(event.target.value)}/></label>
-      <label>Role<select value={role} onChange={event => setRole(event.target.value)}><option value="">All roles</option><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select></label>
+      <label className="people-search">Find a person<input type="search" placeholder="Search by name or email" aria-label="Search users" maxLength={254} disabled={Boolean(busy)} value={search} onChange={event => setSearch(event.target.value)}/></label>
+      <label>Role<select value={query.role} disabled={Boolean(busy)} onChange={event => changeQuery({role: event.target.value, q: search, page: 1})}><option value="">All roles</option><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select></label>
     </div>
-    {!users && loading ? <Loading message="Loading people…"/> : users && <>
-      <p className="collection-count" role="status">{visible.length} of {users.length} people{busy ? ' · Updating role…' : ''}</p>
+    {(!users && loading) || (users && query.page > Math.max(1, users.pages)) ? <Loading message="Loading people…"/> : users && <>
+      <p className="collection-count" role="status">{users.total} {query.q || query.role ? 'matching ' : ''}{users.total === 1 ? 'person' : 'people'}{busy ? ' · Updating role…' : ''}</p>
       {visible.length ? <div className="users-list" aria-label="People" role="list" aria-busy={Boolean(busy) || loading}>{visible.map(account => <div className="user-row" role="listitem" key={account.id}>
         <span className="avatar" aria-hidden="true">{initials(account.name)}</span><div className="user-info"><strong>{account.name}{account.id === user?.id ? ' (you)' : ''}</strong><span>{account.email}</span></div><span className="user-department">{account.department}</span>
-        <label className="sr-only" htmlFor={`role-${account.id}`}>Role for {account.name}</label><select id={`role-${account.id}`} value={account.role} disabled={Boolean(busy) || account.id === user?.id} onChange={event => void change(account, event.target.value as User['role'])}><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select>
-      </div>)}</div> : <div className="empty"><h2>{search.trim() || role ? 'No people match these filters.' : 'No accounts to show.'}</h2>{(search.trim() || role) && <button className="button" onClick={() => { setSearch(''); setRole(''); }}>Clear people filters</button>}</div>}
-      {users.length >= 500 && <p className="muted small-note">Showing the 500 most recent accounts. Search and role filters apply to this loaded list.</p>}
+        <label className="sr-only" htmlFor={`role-${account.id}`}>Role for {account.name}</label><select id={`role-${account.id}`} value={account.role} disabled={Boolean(busy) || loading || account.id === user?.id} onChange={event => void change(account, event.target.value as User['role'])}><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select>
+      </div>)}</div> : <div className="empty"><h2>{query.q || query.role ? 'No people match these filters.' : 'No accounts to show.'}</h2>{(query.q || query.role) && <button className="button" onClick={() => { setSearch(''); changeQuery({q: '', role: '', page: 1}); }}>Clear people filters</button>}</div>}
+      <Pagination data={users} busy={loading || Boolean(busy) || Boolean(loadError) || search.trim() !== query.q} label="People" onPage={page => changeQuery({page})}/>
     </>}
     <p className="muted small-note">Faculty can review project submissions. Administrators can also manage user roles. Your own role cannot be changed here.</p>
   </div>;
