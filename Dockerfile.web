@@ -5,6 +5,7 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN npm ci
 COPY apps/web apps/web
+COPY docker/check-health.cjs docker/check-health.cjs
 ARG API_INTERNAL_URL=http://api:4000
 ARG NODE_BUILD_OPTIONS=--max-old-space-size=1536
 ENV API_INTERNAL_URL=$API_INTERNAL_URL NEXT_TELEMETRY_DISABLED=1
