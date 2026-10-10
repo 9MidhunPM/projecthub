@@ -1,6 +1,6 @@
 'use client';
 
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import type {Dispatch, SetStateAction} from 'react';
 import {ArrowLeft, ArrowRight, Upload, X} from 'lucide-react';
 import {api, isAbortError} from '@/lib/api';
@@ -21,10 +21,21 @@ export function ScreenshotEditor({screenshots, onChange, onUploadingChange, disa
   const [remaining, setRemaining] = useState<File[]>([]);
   const active = useRef<AbortController | null>(null);
   const errorSummary = useRef<HTMLDivElement>(null);
+  const previews = useRef<HTMLDivElement>(null);
+  const moveFocus = useRef<{index: number; direction: 'earlier' | 'later'} | null>(null);
   const uploading = progress !== null;
 
   useEffect(() => () => { active.current?.abort(); }, []);
   useEffect(() => { if (error) errorSummary.current?.focus(); }, [error]);
+  useLayoutEffect(() => {
+    const target = moveFocus.current;
+    if (!target) return;
+    const figure = previews.current?.children[target.index];
+    const preferred = figure?.querySelector<HTMLButtonElement>(`button[data-move="${target.direction}"]:not(:disabled)`);
+    const available = preferred ?? figure?.querySelector<HTMLButtonElement>('button[data-move]:not(:disabled)');
+    available?.focus();
+    moveFocus.current = null;
+  }, [screenshots]);
 
   async function upload(files: File[]) {
     if (!files.length || active.current || disabled) return;
@@ -64,6 +75,7 @@ export function ScreenshotEditor({screenshots, onChange, onUploadingChange, disa
   }
 
   function move(from: number, to: number) {
+    moveFocus.current = {index: to, direction: to < from ? 'earlier' : 'later'};
     onChange(previous => moveScreenshot(previous, from, to));
     setNotice(`Screenshot ${from + 1} moved to position ${to + 1}.${to === 0 ? ' It is now the cover image.' : ''} Save to keep this order.`);
   }
@@ -80,13 +92,13 @@ export function ScreenshotEditor({screenshots, onChange, onUploadingChange, disa
     <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage message={error}/></div>
     {remaining.length > 0 && <button type="button" className="button" disabled={disabled || uploading} onClick={() => void upload(remaining)}>Retry {remaining.length === 1 ? 'remaining screenshot' : `${remaining.length} remaining screenshots`}</button>}
     <p className="upload-notice" role="status">{notice}</p>
-    <div className="upload-previews">
-      {screenshots.map((src, index) => <figure key={`${src}-${index}`}>
+    <div className="upload-previews" ref={previews}>
+      {screenshots.map((src, index) => <figure key={`${src}-${screenshots.slice(0, index).filter(image => image === src).length}`}>
         <img src={src} alt={`Project screenshot ${index + 1}`}/>
         <figcaption>{index === 0 ? 'Cover image' : `Screenshot ${index + 1}`}</figcaption>
         <div className="screenshot-controls">
-          <button type="button" className="icon-button" disabled={disabled || uploading || index === 0} aria-label={`Move screenshot ${index + 1} earlier`} onClick={() => move(index, index - 1)}><ArrowLeft size={15} aria-hidden="true"/></button>
-          <button type="button" className="icon-button" disabled={disabled || uploading || index === screenshots.length - 1} aria-label={`Move screenshot ${index + 1} later`} onClick={() => move(index, index + 1)}><ArrowRight size={15} aria-hidden="true"/></button>
+          <button type="button" className="icon-button" disabled={disabled || uploading || index === 0} data-move="earlier" aria-label={`Move screenshot ${index + 1} earlier`} onClick={() => move(index, index - 1)}><ArrowLeft size={15} aria-hidden="true"/></button>
+          <button type="button" className="icon-button" disabled={disabled || uploading || index === screenshots.length - 1} data-move="later" aria-label={`Move screenshot ${index + 1} later`} onClick={() => move(index, index + 1)}><ArrowRight size={15} aria-hidden="true"/></button>
           <button type="button" className="icon-button" disabled={disabled || uploading} aria-label={`Remove screenshot ${index + 1}`} onClick={() => { onChange(previous => previous.filter((_, item) => item !== index)); setNotice(`Screenshot ${index + 1} removed. Save to keep this change.`); }}><X size={15} aria-hidden="true"/></button>
         </div>
       </figure>)}
