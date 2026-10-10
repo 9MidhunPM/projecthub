@@ -1,2 +1,5 @@
+import type {Metadata} from 'next';
 import {AuthForm} from '@/components/auth-form';
-export default function Signup(){return <AuthForm signup/>}
+
+export const metadata: Metadata = {title: 'Create an account · ProjectHub'};
+export default function Signup() { return <AuthForm signup/>; }
