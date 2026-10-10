@@ -9,16 +9,20 @@ import { Prisma, ProjectStatus } from '@prisma/client';
 import { Db } from './db';
 import { AuthRequest, AuthGuard, AuthService, userSelect } from './auth';
 import { LoginDto, SignupDto, ProfileDto, ProjectDto, ModerationDto, RoleDto } from './dto';
-import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie, sessionTokenId } from './security';
+import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie, sessionTokenId, DUMMY_PASSWORD_HASH } from './security';
 import { parseProjectQuery } from './project-query';
 import { projectInclude as include, ProjectWithCounts, shapeProjects } from './project-shape';
 import { ensureModerationTransition, guardProjectWrite } from './project-state';
 import { persistUpload, UploadCapacityInterceptor } from './uploads';
+import { createSession, SESSION_LIFETIME_MS } from './sessions';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
  constructor(private db:Db,private auth:AuthService){}
- private async session(userId:string,res:Response){const token=randomBytes(32).toString('hex');await this.db.session.create({data:{id:digest(token),userId,expiresAt:new Date(Date.now()+7*86400000)}});res.cookie('ph_session',token,{httpOnly:true,secure:secureCookie(),sameSite:'lax',path:'/api',maxAge:7*86400000});}
+ private async session(userId:string,res:Response) {
+  const {token}=await createSession(this.db,userId);
+  res.cookie('ph_session',token,{httpOnly:true,secure:secureCookie(),sameSite:'lax',path:'/api',maxAge:SESSION_LIFETIME_MS});
+ }
  private async current(req:AuthRequest){await this.auth.resolve(req);return req.user;}
  private async project(id:string,req:AuthRequest){const p=await this.db.project.findUnique({where:{id},include});if(!p)throw new NotFoundException('Project not found');ensureVisible(p,await this.current(req));return p;}
  private async shape(project:ProjectWithCounts,userId?:string){return (await shapeProjects(this.db,[project],userId))[0];}
@@ -34,7 +38,17 @@ export class ApiController {
   }
  }
  @Post('auth/signup') async signup(@Body() body:SignupDto,@Res({passthrough:true}) res:Response){const email=body.email.trim().toLowerCase();try{const user=await this.db.user.create({data:{email,name:body.name,department:body.department,semester:body.semester,passwordHash:await hashPassword(body.password)},select:userSelect});await this.session(user.id,res);return user;}catch(e){if(e instanceof Prisma.PrismaClientKnownRequestError && e.code==='P2002')throw new ConflictException('An account with this email already exists');throw e;}}
- @Post('auth/login') async login(@Body() body:LoginDto,@Res({passthrough:true}) res:Response){const user=await this.db.user.findUnique({where:{email:body.email.trim().toLowerCase()}});if(!user || !await verifyPassword(body.password,user.passwordHash))throw new UnauthorizedException('Invalid email or password');await this.session(user.id,res);const {passwordHash,...safe}=user;return safe;}
+ @Post('auth/login')
+ async login(@Body() body:LoginDto,@Res({passthrough:true}) res:Response) {
+  const user=await this.db.user.findUnique({where:{email:body.email.trim().toLowerCase()}});
+  // Run the same password derivation for an unknown email to reduce the obvious
+  // account-existence timing distinction. Error responses are identical too.
+  const valid=await verifyPassword(body.password,user?.passwordHash??DUMMY_PASSWORD_HASH);
+  if(!user||!valid) throw new UnauthorizedException('Invalid email or password');
+  await this.session(user.id,res);
+  const {passwordHash,...safe}=user;
+  return safe;
+ }
  @Post('auth/logout')
  async logout(@Req() req:AuthRequest,@Res({passthrough:true}) res:Response) {
   const id=sessionTokenId(req.cookies?.ph_session);

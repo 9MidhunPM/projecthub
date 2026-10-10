@@ -5,6 +5,7 @@ Optional request fields may be omitted but cannot be `null`. Human-readable text
 - GET /health -> {ok:true}: process liveness, independent of database availability. GET /health/ready -> {ok:true,database:"up"}: database readiness; returns 503 with a generic message on query failure and is never cached. Neither endpoint requires authentication.
 - POST /auth/signup {name,email,password,department,semester}; POST /auth/login {email,password}; POST /auth/logout; GET /auth/me -> user object (401 logged out).
   Logout is idempotent and clears the session cookie even when the session is missing, expired, or already revoked. `COOKIE_SECURE=true` enables secure cookies in every environment; production defaults to secure cookies.
+  Sessions last seven days. Each user can hold up to ten active sessions; signing in removes that user's expired sessions and evicts the oldest excess sessions. Concurrent sign-ins are serialized per user when enforcing the cap.
 - PATCH /profile {name?,department?,semester?,bio?} -> user.
 - GET /projects?q=&department=&semester=&type=&tech=&page=1&limit=12&sort=recent|popular -> {items,total,page,limit,pages}. Approved only.
   Query values must be single strings (repeated/structured values and unsupported parameter names return 400). Page is an integer 1–10000; limit is 1–48; semester is 1–12. Out-of-range or malformed numbers and unknown sort values return 400. Search is at most 200 characters, department 80, type 60, technology 40. Empty text filters are ignored. Recent/popular sorts have deterministic timestamp/ID tie-breakers.

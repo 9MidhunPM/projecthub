@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AuthService } from '../dist/auth';
 import { ApiController } from '../dist/controller';
+import { UnauthorizedException } from '@nestjs/common';
 import { digest, secureCookie, sessionTokenId } from '../src/security';
 
 test('session tokens accept only the exact generated lowercase hexadecimal format', () => {
@@ -10,6 +11,19 @@ test('session tokens accept only the exact generated lowercase hexadecimal forma
   for (const token of [undefined, null, ['a'.repeat(64)], 123, 'g'.repeat(64), 'A'.repeat(64), ' '.repeat(64), 'a'.repeat(63), 'a'.repeat(65)]) {
     assert.equal(sessionTokenId(token), undefined);
   }
+});
+
+test('unknown accounts still run password verification and use the same login failure response', async t => {
+  const security = require('../dist/security');
+  const calls: unknown[] = [];
+  t.mock.method(security, 'verifyPassword', async (...args: unknown[]) => { calls.push(args); return false; });
+  const controller = new ApiController({ user: { findUnique: async () => null } } as any, {} as any);
+  await assert.rejects(controller.login({ email: 'unknown@example.test', password: 'test-password' }, {} as any), (error: unknown) => {
+    assert(error instanceof UnauthorizedException);
+    assert.equal(error.message, 'Invalid email or password');
+    return true;
+  });
+  assert.deepEqual(calls, [['test-password', security.DUMMY_PASSWORD_HASH]]);
 });
 
 test('auth resolution stays consistent within a request and checks revocation on the next request', async t => {
