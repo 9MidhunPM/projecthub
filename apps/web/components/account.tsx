@@ -120,12 +120,12 @@ function AdminContent() {
       <label>Role<select value={query.role} disabled={Boolean(busy)} onChange={event => changeQuery({role: event.target.value, q: search, page: 1})}><option value="">All roles</option><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select></label>
     </div>
     {(!users && loading) || (users && query.page > Math.max(1, users.pages)) ? <Loading message="Loading people…"/> : users && <>
-      <p className="collection-count" role="status">{users.total} {query.q || query.role ? 'matching ' : ''}{users.total === 1 ? 'person' : 'people'}{busy ? ' · Updating role…' : ''}</p>
+      {!loading && !loadError && <p className="collection-count" role="status">{users.total} {query.q || query.role ? 'matching ' : ''}{users.total === 1 ? 'person' : 'people'}{busy ? ' · Updating role…' : ''}</p>}
       {visible.length ? <div className="users-list" aria-label="People" role="list" aria-busy={Boolean(busy) || loading}>{visible.map(account => <div className="user-row" role="listitem" key={account.id}>
         <span className="avatar" aria-hidden="true">{initials(account.name)}</span><div className="user-info"><strong>{account.name}{account.id === user?.id ? ' (you)' : ''}</strong><span>{account.email}</span></div><span className="user-department">{account.department}</span>
         <label className="sr-only" htmlFor={`role-${account.id}`}>Role for {account.name}</label><select id={`role-${account.id}`} value={account.role} disabled={Boolean(busy) || loading || account.id === user?.id} onChange={event => void change(account, event.target.value as User['role'])}><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select>
-      </div>)}</div> : <div className="empty"><h2>{query.q || query.role ? 'No people match these filters.' : 'No accounts to show.'}</h2>{(query.q || query.role) && <button className="button" onClick={() => { setSearch(''); changeQuery({q: '', role: '', page: 1}); }}>Clear people filters</button>}</div>}
-      <Pagination data={users} busy={loading || Boolean(busy) || Boolean(loadError) || search.trim() !== query.q} label="People" onPage={page => changeQuery({page})}/>
+      </div>)}</div> : loading ? <Loading message="Refreshing people…"/> : !loadError && <div className="empty"><h2>{query.q || query.role ? 'No people match these filters.' : 'No accounts to show.'}</h2>{(query.q || query.role) && <button className="button" onClick={() => { setSearch(''); changeQuery({q: '', role: '', page: 1}); }}>Clear people filters</button>}</div>}
+      <Pagination data={users} busy={loading || Boolean(busy) || search.trim() !== query.q} label="People" onPage={page => changeQuery({page})}/>
     </>}
     <p className="muted small-note">Faculty can review project submissions. Administrators can also manage user roles. Your own role cannot be changed here.</p>
     <AuditHistory revision={auditRevision}/>

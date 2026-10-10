@@ -97,3 +97,34 @@ test('role changes refill the filtered page and recover when its final page disa
   assert.deepEqual(pages, [2, 2, 1]);
   assert.equal(new URLSearchParams(window.location.search).get('role'), 'STUDENT');
 });
+
+test('a failed role-change refill does not claim an empty collection and keeps previous-page recovery', async () => {
+  window.history.replaceState({}, '', '/admin?page=2&role=STUDENT');
+  const refill = deferred<Response>();
+  let changed = false;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/auth/me')) return Response.json({...student, id: 'admin-1', role: 'ADMIN'});
+    if (String(url).includes('/admin/audit?')) return Response.json(listing([], 0, 1, 25));
+    if (options?.method === 'PATCH') { changed = true; return Response.json({...student, role: 'FACULTY'}); }
+    const page = Number(new URL(String(url), 'http://localhost:3000').searchParams.get('page'));
+    if (changed && page === 2) return refill.promise;
+    return Response.json(listing([{...student, name: page === 1 ? 'Earlier student' : student.name}], 26, page, 25));
+  };
+  window.confirm = () => true;
+  const view = renderApp(<Admin/>, '/admin');
+  await waitFor(() => assert.ok(view.getByLabelText(`Role for ${student.name}`)));
+  fireEvent.change(view.getByLabelText(`Role for ${student.name}`), {target: {value: 'FACULTY'}});
+  await waitFor(() => assert.ok(view.queryByLabelText(`Role for ${student.name}`) === null));
+  assert.ok(view.queryByText('No people match these filters.') === null, 'must not claim no matches during refresh or error');
+  assert.ok(view.queryByText('26 matching people') === null, 'must not announce stale totals during refresh or error');
+  await act(async () => refill.resolve(Response.json({message: 'Temporary failure'}, {status: 503})));
+  await waitFor(() => assert.ok(view.getByText('Temporary failure')));
+  assert.ok(view.queryByText('No people match these filters.') === null, 'must not claim no matches during refresh or error');
+  assert.ok(view.queryByText('26 matching people') === null, 'must not announce stale totals during refresh or error');
+  assert.ok(view.getByRole('button', {name: 'Try again'}));
+  const previous = view.getByRole('button', {name: 'Previous people page'}) as HTMLButtonElement;
+  assert.equal(previous.disabled, false);
+  fireEvent.click(previous);
+  await waitFor(() => assert.ok(view.getByText('Earlier student')));
+  assert.equal(new URLSearchParams(window.location.search).get('page'), null);
+});
