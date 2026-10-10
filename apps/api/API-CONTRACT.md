@@ -1,5 +1,6 @@
 # ProjectHub API
 Base `/api`, JSON, browser credentials included. Cookies are httpOnly; mutations require Origin matching WEB_ORIGIN (default http://localhost:3000). Error shape `{statusCode,message}`.
+JSON request bodies are limited to 256 KiB (413 when exceeded); all API responses disable caching. Rate-limit responses use the same JSON error shape with status 429 and standard retry headers. Startup rejects invalid origins, ports, proxy IPs, or cookie-security flags.
 Optional request fields may be omitted but cannot be `null`. Human-readable text, email, URLs, and individual technology/team names are trimmed before validation; passwords are preserved exactly. Empty strings clear optional text fields, and an empty screenshot array clears screenshots.
 - GET /health -> {ok:true}: process liveness, independent of database availability. GET /health/ready -> {ok:true,database:"up"}: database readiness; returns 503 with a generic message on query failure and is never cached. Neither endpoint requires authentication.
 - POST /auth/signup {name,email,password,department,semester}; POST /auth/login {email,password}; POST /auth/logout; GET /auth/me -> user object (401 logged out).

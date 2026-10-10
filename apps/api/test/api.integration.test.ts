@@ -33,6 +33,14 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  assert.equal(readiness.status,200);
  assert.equal(readiness.headers.get('cache-control'),'no-store');
  assert.deepEqual(await readiness.json(),{ok:true,database:'up'});
+ assert.equal((await fetch(baseUrl+'/api/auth/me')).headers.get('cache-control'),'no-store');
+ assert.equal((await request('/auth/login','POST',{email:'missing@example.test',password:'x'.repeat(128*1024)})).status,400);
+ assert.equal((await request('/auth/login','POST',{email:'missing@example.test',password:'x'.repeat(300*1024)})).status,413);
+ const malformed = await fetch(baseUrl+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://evil.example'},body:'{'});
+ assert.equal(malformed.status,403);
+ const malformedTrusted = await fetch(baseUrl+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:'http://localhost:3000'},body:'{"password":"sensitive-password",'});
+ assert.equal(malformedTrusted.status,400);
+ assert.deepEqual(await malformedTrusted.json(),{statusCode:400,message:'Malformed JSON request body'});
  const a=await signup('Owner'),b=await signup('Other'),reviewer=await signup('Reviewer'),admin=await signup('Admin');await db.user.update({where:{id:admin.data.id},data:{role:'ADMIN'}});await db.user.update({where:{id:reviewer.data.id},data:{role:'FACULTY'}});
  assert.equal((await request('/auth/signup','POST',{name:'Attack',email:`attack-${suffix}@test.example`,password:'a-secure-test-password',department:'CS',semester:1,role:'ADMIN'})).status,400);
  assert.equal((await request('/auth/login','POST',{email:`Owner-${suffix}@test.example`,password:'a-secure-test-password'},'','https://evil.example')).status,403);
