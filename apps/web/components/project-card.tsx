@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {Heart, Bookmark, ArrowUpRight, Layers} from 'lucide-react';
-import {api, Engagement, initials, Project} from '@/lib/api';
+import {api, Engagement, initials, isAbortError, Project} from '@/lib/api';
 import {authHref} from '@/lib/auth-navigation';
 import {useApp} from './shell';
 
@@ -18,32 +18,53 @@ export function ProjectCover({project}: {project: Project}) {
 export function ProjectCard({project, onUpdate}: {project: Project; onUpdate?: (project: Project) => void}) {
   const [current, setCurrent] = useState(project);
   const [busy, setBusy] = useState(false);
-  const pending = useRef(false);
+  const request = useRef<{controller: AbortController; projectId: string; userId: string} | null>(null);
+  const latest = useRef(project);
+  const updateCallback = useRef(onUpdate);
   const {user, loading, notify} = useApp();
   const router = useRouter();
 
-  useEffect(() => { setCurrent(project); }, [project]);
+  // Synchronize metadata before any pending response can publish an update.
+  useLayoutEffect(() => {
+    latest.current = project;
+    setCurrent(project);
+  }, [project]);
+  useLayoutEffect(() => {
+    updateCallback.current = onUpdate;
+    const active = request.current;
+    if (active && (active.projectId !== project.id || active.userId !== user?.id)) {
+      active.controller.abort();
+      request.current = null;
+      setBusy(false);
+    }
+  }, [project.id, user?.id, onUpdate]);
+  useEffect(() => () => {
+    request.current?.controller.abort();
+    request.current = null;
+  }, []);
 
   async function toggle(kind: 'like' | 'bookmark') {
-    if (pending.current || loading) return;
+    if (request.current || loading) return;
     if (!user) {
       router.push(authHref(false, `${window.location.pathname}${window.location.search}`));
       return;
     }
-    pending.current = true;
+    const active = {controller: new AbortController(), projectId: latest.current.id, userId: user.id};
+    request.current = active;
     setBusy(true);
     try {
-      const selected = kind === 'like' ? current.liked : current.bookmarked;
-      const engagement = await api<Engagement>(`/projects/${current.id}/${kind}`, {method: selected ? 'DELETE' : 'PUT'});
-      const updated = {...current, ...engagement};
+      const selected = kind === 'like' ? latest.current.liked : latest.current.bookmarked;
+      const engagement = await api<Engagement>(`/projects/${active.projectId}/${kind}`, {method: selected ? 'DELETE' : 'PUT', signal: active.controller.signal});
+      if (active.controller.signal.aborted || request.current !== active || latest.current.id !== active.projectId) return;
+      const updated = {...latest.current, ...engagement};
+      latest.current = updated;
       setCurrent(updated);
-      onUpdate?.(updated);
+      updateCallback.current?.(updated);
       if (kind === 'bookmark') notify(updated.bookmarked ? 'Project saved to Bookmarks.' : 'Project removed from Bookmarks.');
     } catch (failure) {
-      notify((failure as Error).message);
+      if (request.current === active && !active.controller.signal.aborted && !isAbortError(failure)) notify((failure as Error).message);
     } finally {
-      pending.current = false;
-      setBusy(false);
+      if (request.current === active) { request.current = null; setBusy(false); }
     }
   }
 
