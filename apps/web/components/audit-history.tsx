@@ -34,7 +34,7 @@ export function AuditHistory({revision}: {revision: number}) {
           <div className="audit-details">{auditDetails(entry).map((detail, index) => <p key={index}>{detail}</p>)}</div>
         </li>;
       })}</ol>
-      <Pagination data={data} busy={loading || Boolean(error)} label="Audit" onPage={setPage}/>
     </> : !error && !loading && <div className="empty"><h3>No recorded changes yet.</h3><p>Role and project-review actions will appear here.</p></div>}
+    <Pagination data={data} page={page} loading={loading} label="Audit" onPage={setPage}/>
   </section>;
 }

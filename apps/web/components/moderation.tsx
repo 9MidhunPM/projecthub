@@ -93,7 +93,7 @@ function ReviewQueue() {
           </>}
         </article>;
       })}</div>
-      {data && <Pagination data={data} busy={loading || Boolean(busy) || Boolean(error)} label="Review" onPage={page => change({page})}/>}
     </> : loading ? <Loading message="Refreshing review queue…"/> : !error && <div className="empty"><ShieldCheck size={40} aria-hidden="true"/><h2>{queues.find(queue => queue.value === status)?.empty}</h2><p>{status === 'PENDING' ? 'New student submissions will appear here.' : 'Choose another queue to continue reviewing.'}</p></div>}
+    <Pagination data={data} page={query.page} loading={loading} busy={Boolean(busy)} label="Review" onPage={page => change({page})}/>
   </div>;
 }

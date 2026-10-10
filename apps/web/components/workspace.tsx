@@ -47,7 +47,9 @@ function WorkspaceContent() {
           <div className="row-actions" role="cell"><Link className="button compact" aria-label={`Edit ${project.title}`} href={`/projects/${project.id}/edit`}><Pencil size={15} aria-hidden="true"/>Edit</Link><Link className="icon-button" aria-label={`View ${project.title}`} href={`/projects/${project.id}`}><ArrowUpRight size={19} aria-hidden="true"/></Link></div>
         </div>)}
       </div> : data.summary.total > 0 ? <div className="empty"><Folder size={36} aria-hidden="true"/><h2>No projects with this status.</h2><p>Choose another status to find your work.</p><button className="button" onClick={() => change({status: '', page: 1})}>Show all projects</button></div> : <div className="empty"><Folder size={40} aria-hidden="true"/><h2>Your first project starts here.</h2><p>Build a home for your work. Save a draft and share it when you’re ready.</p><Link className="button primary" href="/projects/new">Create your first project</Link></div>}
-      <Pagination data={data} busy={loading || Boolean(error)} label="Workspace" onPage={page => change({page})}/>
+    </>}
+    <Pagination data={data} page={query.page} loading={loading} label="Workspace" onPage={page => change({page})}/>
+    {data && projects && query.page <= Math.max(1, data.pages) && <>
       <section className="before-share"><h2>Before you share</h2><p>Make sure your project is complete and easy to understand.</p><div className="checklist">{[[Image, 'Screenshots', 'Show your project in action.'], [Users, 'Team', 'Give your collaborators credit.'], [GitBranch, 'Repository', 'Link to the code behind your idea.'], [FileText, 'Description', 'Share the problem and what you learned.']].map(([Icon, title, text]) => { const I = Icon as typeof Image; return <div key={String(title)}><I size={21} aria-hidden="true"/><strong>{String(title)}</strong><span>{String(text)}</span></div>; })}</div></section>
     </>}
   </div>;
@@ -78,7 +80,7 @@ function BookmarkContent() {
     {(!data && loading) || (data && query.page > Math.max(1, data.pages)) ? <Loading message="Loading saved projects…"/> : data?.items.length ? <>
       <p className="collection-count" role="status">{data.total} saved {data.total === 1 ? 'project' : 'projects'}</p>
       <div className="project-grid bookmarks-grid" aria-busy={loading}>{data.items.map(project => <ProjectCard project={project} onUpdate={update} key={project.id}/>)}</div>
-      <Pagination data={data} busy={loading || Boolean(error)} label="Bookmarks" onPage={page => change({page})}/>
     </> : loading ? <Loading message="Refreshing saved projects…"/> : !error && <div className="empty"><Bookmark size={40} aria-hidden="true"/><h2>Your collection is waiting.</h2><p>Save projects from Explore and find them here.</p><Link className="button primary" href="/">Explore projects</Link></div>}
+    <Pagination data={data} page={query.page} loading={loading} label="Bookmarks" onPage={page => change({page})}/>
   </div>;
 }
