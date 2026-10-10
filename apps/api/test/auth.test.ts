@@ -12,7 +12,7 @@ test('session tokens accept only the exact generated lowercase hexadecimal forma
   }
 });
 
-test('auth resolution clears stale identities and rejects expired sessions at the boundary', async t => {
+test('auth resolution stays consistent within a request and checks revocation on the next request', async t => {
   const now = 2000000000000;
   t.mock.method(Date, 'now', () => now);
   let record: any = { user: { id: 'user' }, expiresAt: new Date(now + 1) };
@@ -24,14 +24,32 @@ test('auth resolution clears stale identities and rejects expired sessions at th
   assert.equal(request.sessionId, digest('a'.repeat(64)));
   record.expiresAt = new Date(now);
   await auth.resolve(request);
-  assert.equal(request.user, undefined);
-  assert.equal(request.sessionId, undefined);
+  assert.equal(request.user.id, 'user');
+  assert.equal(queries, 1);
+  const expired: any = { cookies: request.cookies, user: { id: 'stale' }, sessionId: 'stale' };
+  await auth.resolve(expired);
+  assert.equal(expired.user, undefined);
+  assert.equal(expired.sessionId, undefined);
   record = null;
-  await auth.resolve(request);
-  assert.equal(request.user, undefined);
-  request.cookies.ph_session = 'g'.repeat(64);
-  await auth.resolve(request);
+  const revoked: any = { cookies: request.cookies };
+  await auth.resolve(revoked);
+  assert.equal(revoked.user, undefined);
+  await auth.resolve({ cookies: { ph_session: 'g'.repeat(64) } } as any);
   assert.equal(queries, 3);
+});
+
+test('concurrent auth readers await the same in-flight lookup', async () => {
+  let finish!: (value: unknown) => void;
+  let queries = 0;
+  const lookup = new Promise(resolve => { finish = resolve; });
+  const auth = new AuthService({ session: { findUnique: () => { queries++; return lookup; } } } as any);
+  const request: any = { cookies: { ph_session: 'a'.repeat(64) } };
+  const first = auth.resolve(request);
+  const second = auth.resolve(request);
+  assert.equal(queries, 1);
+  finish({ user: { id: 'user' }, expiresAt: new Date(Date.now() + 10000) });
+  await Promise.all([first, second]);
+  assert.equal(request.user.id, 'user');
 });
 
 test('logout clears cookies even for missing, malformed, revoked or expired sessions', async () => {
