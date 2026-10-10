@@ -4,7 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm ci
+# Retain API migration/seed tooling without installing the web workspace.
+RUN npm ci --workspace=@projecthub/api --include-workspace-root=false
 COPY apps/api apps/api
 COPY docker/with-db-secret.cjs docker/with-db-secret.cjs
 COPY docker/check-health.cjs docker/check-health.cjs
