@@ -28,7 +28,7 @@ A fresh installed-Chromium check on 2026-10-10 failed before page creation with 
 
 React/jsdom tests provide useful interaction coverage, and production HTTP checks prove server/proxy workflows, but neither establishes responsive layout, visual fidelity, browser-console health, real keyboard behavior, or screen-reader accessibility. Use [manual QA](MANUAL-QA.md) in a supported desktop/mobile browser before release.
 
-Docker is unavailable in the local execution environment. Subsequent hosted ordinary-Compose image/runtime checks are recorded below; the local standalone runtime smoke alone validates copied file layout and server behavior, not container execution. The Dokploy-specific secret initializer, credential-volume permissions, and PostgreSQL password-file/privilege-drop path remain unexecuted.
+Docker is unavailable in the local execution environment. Hosted checks below cover both ordinary Compose and the unchanged, port-free `compose.dokploy.yaml` recipe with disposable test volumes, including secret initialization, credential permissions, and PostgreSQL authentication/privilege drop. The local standalone smoke alone does not establish container execution. No check connects to a real Dokploy instance or validates its ingress, HTTPS, automatic deployment behavior, or intended host.
 
 The fixture-only recovery rehearsal uses a quiescent fictional database/upload pair. It is not a production restore or a live cross-store snapshot strategy; it explicitly demonstrates that old session rows can resurrect revoked sessions. See [recovery boundaries](RECOVERY-REHEARSAL.md).
 
@@ -71,4 +71,26 @@ The exact-head workflow above completed successfully, observed at **15:24 UTC on
 
 The hosted runner was Ubuntu 24.04, image `20261004.327.1`, with Docker Compose 2.38.2. Runtime logs confirmed actual API/web image builds, successful migrations, container health, same-origin readiness/HTML/static assets, API package isolation/generated client/native image codec, non-root API/web users, upload-volume persistence, loopback-only web port publication, database-outage recovery, and project-scoped cleanup.
 
-The Compose job parses the Dokploy configuration but executes only ordinary `compose.yaml`. It does not validate Dokploy secret initialization, credential-volume recovery, ingress/HTTPS, or behavior on the intended deployment host. The fixture recovery command is local-only and is not part of this hosted workflow. No rendered-browser or production-service check is implied by these passing jobs; the limitations above still apply.
+At checkpoint 83, the Compose job parsed the Dokploy configuration but executed only ordinary `compose.yaml`. The later recipe checkpoint below adds isolated secret-lifecycle runtime evidence; credential-volume recovery, ingress/HTTPS, and behavior on the intended deployment host remain outside these checks. The fixture recovery command is local-only and is not part of this hosted workflow. No rendered-browser or production-service check is implied by these passing jobs; the limitations above still apply.
+
+## Verified container and crash-test checkpoint: 2026-10-10
+
+This later **89-commit checkpoint** records additional test evidence, not session completion or coverage of later revisions:
+
+- Local checkpoint: `ba76afb7e8603bad8e2e48c3f01c919aef999c64`
+- Published checkpoint: `cbf372ee07bb2399f704cb5abb77c48edbb77732`
+- Identical tree: `0b329cd9f9e590d6f3d92d39fe023cd173a83340`
+- Exact-head workflow: [Verify ProjectHub, run 38067818658](https://github.com/9MidhunPM/projecthub/actions/runs/38067818658)
+
+The same local command sequence listed above passed again, including fixture recovery, with zero failures or skips. The database integration suite now also kills an owned uploader process with `SIGKILL` after committed reservation, partial file write, and committed READY state. A fresh API process verifies retained quota charges, PENDING privacy/attachment rejection, authorized READY readback, and unchanged unrelated upload data. These tests leave PostgreSQL and the OS running; they do not establish host/power-loss durability, filesystem `fsync`, or every possible crash boundary.
+
+The hosted workflow completed successfully at **16:31 UTC on 2026-10-10**, with all five jobs passing: Node 22 checks/build, Node 24 checks/build, PostgreSQL integration/production-proxy regression, ordinary Compose runtime, and the separate credential-recipe lifecycle. The [recipe job](https://github.com/9MidhunPM/projecthub/actions/runs/38067818658/job/114258956274) built and started the unchanged `compose.dokploy.yaml` under its own disposable project with no published ports. Fixed stage output confirmed:
+
+- Successful real initializer/migrations and healthy database/API/web services
+- PostgreSQL privilege drop, credential-file ownership/modes, and non-root migration/API authentication, including strict wrong-password rejection
+- Internal frontend-proxy readiness and gallery access, without a web credential mount
+- Credential preservation across initializer rerun and database/API recreation
+- Refusal by the real initializer after the stopped synthetic fixture's credential was withheld, without silently replacing it
+- Successful scoped removal of the owned containers, network, and all test volumes
+
+Authentication material and comparison fingerprints stayed within the isolated fixture, persisted only in its disposable volumes, and were never emitted in test output. This was an isolated Compose recipe exercise. Real Dokploy network rewriting, ingress/TLS, secure-cookie behavior through that ingress, automatic deployment, host capacity, credential-volume restoration/rotation, production recovery, and rendered-browser behavior remain unverified. The fixture recovery command remains local-only; no deployment or production action was performed.

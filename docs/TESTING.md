@@ -39,6 +39,12 @@ Every invocation creates a unique temporary cluster/database and random loopback
 
 The helper needs `initdb`, `pg_ctl`, and `createdb`. It finds `PG_BIN`, PATH, `pg_config --bindir`, or common Debian installation paths. Do not start it under `NODE_ENV=production`.
 
+## Uploader process-crash regression
+
+On Unix, `npm run test:integration` includes `apps/api/test/upload-crashes.integration.test.ts`. It starts owned, loopback-only API children against a unique migrated test schema and temporary upload directory. Test-only wrappers pause at three real persisted-state boundaries: committed PENDING reservation before file creation, a partial file write, and committed READY state before the HTTP response. The parent verifies that state independently, then sends `SIGKILL` only to its uploader child, bypassing normal exception/finally cleanup.
+
+A fresh API child without the crash wrappers verifies that quota charges persist, PENDING uploads remain unreadable/unattachable, READY uploads retain authorized access, further uploads are rejected at the limit, and an unrelated sentinel file/record remains unchanged. PostgreSQL and the operating system stay alive. This does not simulate host/power loss, prove filesystem `fsync` durability, or enumerate every native write boundary. Production code has no crash flags or failpoints.
+
 ## An existing isolated test database
 
 Only loopback hosts (`127.0.0.1`, `localhost`, `::1`) and database names `projecthub_test` or `projecthub_test_<suffix>` are accepted. Connection parameters cannot override the host/database. This guard reduces accidental misuse; you must still ensure a loopback tunnel does not lead to production.
@@ -64,7 +70,7 @@ The API is compiled and uses a real PostgreSQL database. Both synthetic HTTP har
 
 `.github/workflows/verify.yml` defines Node 22/24 type/unit/build checks, a PostgreSQL 17 service with migration/integration/full-stack checks, ordinary Compose configuration/runtime checks, and a separate isolated credential-recipe job. Action versions are pinned to verified immutable commit SHAs, checkout credentials are not persisted, and jobs have read-only repository permissions. No deployment or production secrets are involved. Checked-in workflow configuration is not evidence that a hosted CI run has passed.
 
-Before release, rerun the gates against the intended revision, use [manual QA](MANUAL-QA.md) in supported real desktop/mobile browsers, and complete deployment-specific HTTPS, backup/restore, and operational checks. Ordinary Compose runtime evidence does not validate the Dokploy-specific recipe. The dated [verified application checkpoint](VALIDATION.md#verified-application-checkpoint-2026-10-10) separates completed local/hosted checks from remaining gaps.
+Before release, rerun the gates against the intended revision, use [manual QA](MANUAL-QA.md) in supported real desktop/mobile browsers, and complete deployment-specific HTTPS, backup/restore, and operational checks. The ordinary Compose and credential-recipe jobs have distinct scopes. The dated [application checkpoint](VALIDATION.md#verified-application-checkpoint-2026-10-10) and [later recipe/crash-test checkpoint](VALIDATION.md#verified-container-and-crash-test-checkpoint-2026-10-10) separate completed checks from remaining gaps.
 
 ## Hosted Docker runtime smoke
 
@@ -88,7 +94,7 @@ The helper's pure validation tests run with `npm run test:ops` and do not start 
 
 The separate `credential-recipe` job invokes `node scripts/dokploy-smoke.cjs` on an ephemeral GitHub-hosted runner. It uses the unchanged `compose.dokploy.yaml` under a unique test project, with fresh `postgres_data`, `uploads`, and `db_credentials` volumes. It publishes **no host ports** and probes services through container commands. The fixed HTTPS origin in the recipe is configuration only: the test never contacts Dokploy, resolves the public application domain, configures ingress, or deploys anything. Images are built locally on the disposable runner and are not pushed to a registry.
 
-The helper is designed to verify:
+The helper verifies:
 
 - The real secret initializer and migration job succeed; PostgreSQL/API/web become healthy
 - Root-owned, group-1000 credential-file permissions, UID-1000 API/migration readability, and read-only credential mounts
@@ -102,7 +108,7 @@ Generated credentials and comparison fingerprints stay inside the disposable fix
 
 Safety checks reject non-hosted execution, remote Docker settings, inherited Compose/builder overrides, host publishing, bind mounts, external volumes/networks, unexpected build contexts, and changed credential wiring. Every Docker command uses the local Unix socket with a fresh private home/client/buildx configuration and the default builder; no existing registry credentials, proxy configuration, or selected builder are copied. Cleanup inspects both project-labeled resources and exact configured volume/network names, refusing foreign or missing ownership labels before removal. It never runs a general prune. The helper has a 15-minute execution deadline and a separate 90-second cleanup budget inside a dedicated 20-minute job. Its temporary CLI configuration is also removed. Hard runner termination can still prevent cleanup; this is not suitable for a persistent/self-hosted machine.
 
-At introduction on 2026-10-10, only unit/static checks have run for this new helper; its actual Docker/Compose execution remains pending an approved, reviewed hosted run. Those unit tests are included in `npm run test:ops` and create no credentials or Docker resources. A passing ordinary-Compose job does not validate this different recipe. Even a future successful recipe run cannot establish Dokploy's network rewriting, public HTTPS/cookie behavior, production-host capacity, credential-volume restoration, rotation, or disaster recovery. Record exact-head runtime results separately in [VALIDATION.md](VALIDATION.md).
+This exact recipe passed its isolated hosted lifecycle on 2026-10-10 at the [89-commit checkpoint](VALIDATION.md#verified-container-and-crash-test-checkpoint-2026-10-10), including scoped cleanup. Its pure helper tests also run with `npm run test:ops` and create no credentials or Docker resources. The hosted result does not establish real Dokploy network rewriting, public HTTPS/cookie behavior, automatic deployment, production-host capacity, credential-volume restoration, rotation, or disaster recovery. Rerun against the intended revision and complete approved platform-specific staging checks before production use.
 
 ## Local fixture recovery rehearsal
 
