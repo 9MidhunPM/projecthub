@@ -17,6 +17,10 @@ enum ProjectStatus {
  CHANGES_REQUESTED
  HIDDEN
 }
+enum UploadState {
+ PENDING
+ READY
+}
 model User {
  id String @id @default(cuid())
  email String @unique
@@ -106,5 +110,7 @@ model Upload {
  filename String @id
  ownerId String
  createdAt DateTime @default(now())
+ bytes BigInt?
+ state UploadState @default(READY)
  @@index([ownerId])
 }

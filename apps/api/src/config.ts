@@ -1,5 +1,20 @@
 import { isIP } from 'node:net';
 
+export function readUploadLimits(environment: NodeJS.ProcessEnv = process.env) {
+  function positiveInteger(name: string, fallback: number) {
+    const raw = environment[name] ?? String(fallback);
+    const value = Number(raw);
+    if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(value)) {
+      throw new Error(`${name} must be a positive safe integer`);
+    }
+    return value;
+  }
+  return {
+    bytes: BigInt(positiveInteger('UPLOAD_MAX_BYTES', 100 * 1024 * 1024)),
+    files: positiveInteger('UPLOAD_MAX_FILES', 500),
+  };
+}
+
 export function readApiConfig(environment: NodeJS.ProcessEnv = process.env) {
   if (environment.NODE_ENV === 'production' && !environment.WEB_ORIGIN) {
     throw new Error('WEB_ORIGIN is required in production');
@@ -25,5 +40,6 @@ export function readApiConfig(environment: NodeJS.ProcessEnv = process.env) {
   if (trustedProxies.some(ip => !isIP(ip))) {
     throw new Error('TRUST_PROXY_IPS must contain explicit IP addresses');
   }
-  return { origin, port, trustedProxies };
+  const uploadLimits = readUploadLimits(environment);
+  return { origin, port, trustedProxies, uploadLimits };
 }

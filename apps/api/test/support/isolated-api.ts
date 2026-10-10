@@ -47,7 +47,7 @@ export async function isolatedApi() {
     app = await bootstrap({ port: 0, host: '127.0.0.1' });
     const base = await app.getUrl();
     return {
-      db, close,
+      db, close, base,
       cookie: async (userId: string) => 'ph_session=' + (await createSession(db, userId)).token,
       request: async (path: string, cookie = '', method = 'GET', body?: unknown) => {
         const response = await fetch(base + '/api' + path, {

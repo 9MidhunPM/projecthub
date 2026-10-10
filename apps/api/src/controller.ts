@@ -18,9 +18,11 @@ import { createSession, SESSION_LIFETIME_MS } from './sessions';
 import { changeUserRole } from './roles';
 import { parseAuditCollectionQuery, parseProjectCollectionQuery, parseUserCollectionQuery } from './collection-query';
 import { pageResult } from './query-params';
+import { readUploadLimits } from './config';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
+ private readonly uploadLimits=readUploadLimits();
  constructor(private db:Db,private auth:AuthService){}
  private async session(userId:string,res:Response) {
   const {token}=await createSession(this.db,userId);
@@ -104,7 +106,27 @@ export class ApiController {
   return this.projectPage({status:'APPROVED',bookmarks:{some:{userId:req.user!.id}}},[{createdAt:'desc'},{id:'desc'}],pagination,req.user!.id);
  }
  @Get('projects/:id') async detail(@Param('id') id:string,@Req() req:AuthRequest){return this.shape(await this.project(id,req),req.user?.id);}
- private async validateScreenshots(body:ProjectDto,userId:string){for(const url of body.screenshots||[]){if(['/examples/campus-connect.png','/examples/ecotrack.png','/examples/study-space.png'].includes(url))continue;try{const filename=url.split('/').pop()!;const upload=await this.db.upload.findUnique({where:{filename}});if(!upload||upload.ownerId!==userId)throw Error();await stat(resolve(uploadDir,filename));}catch{throw new BadRequestException('Screenshot does not exist');}}for(const value of [body.githubUrl,body.demoUrl])if(value){try{const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error();}catch{throw new BadRequestException('Links must be valid HTTP or HTTPS URLs');}}}
+ private async validateScreenshots(body:ProjectDto,userId:string) {
+  for(const url of body.screenshots||[]) {
+   if(['/examples/campus-connect.png','/examples/ecotrack.png','/examples/study-space.png'].includes(url)) continue;
+   try {
+    const filename=url.split('/').pop()!;
+    const upload=await this.db.upload.findUnique({where:{filename}});
+    if(!upload||upload.state!=='READY'||upload.ownerId!==userId) throw Error();
+    await stat(resolve(uploadDir,filename));
+   } catch {
+    throw new BadRequestException('Screenshot does not exist');
+   }
+  }
+  for(const value of [body.githubUrl,body.demoUrl]) if(value) {
+   try {
+    const url=new URL(value);
+    if(!['http:','https:'].includes(url.protocol)||url.username||url.password) throw Error();
+   } catch {
+    throw new BadRequestException('Links must be valid HTTP or HTTPS URLs');
+   }
+  }
+ }
  @Post('projects') @UseGuards(AuthGuard) async create(@Body() body:ProjectDto,@Req() req:AuthRequest){await this.validateScreenshots(body,req.user!.id);return this.shape(await this.db.project.create({data:{...body,screenshots:body.screenshots||[],ownerId:req.user!.id},include}),req.user!.id);}
  @Patch('projects/:id') @UseGuards(AuthGuard)
  async update(@Param('id') id:string,@Body() body:UpdateProjectDto,@Req() req:AuthRequest) {
@@ -152,13 +174,13 @@ export class ApiController {
   let buffer:Buffer;
   try { buffer=await normalizeUpload(file.buffer); }
   catch { throw new BadRequestException('Use a valid PNG, JPEG or WebP image'); }
-  return persistUpload(this.db,uploadDir,req.user!.id,buffer);
+  return persistUpload(this.db,uploadDir,req.user!.id,buffer,this.uploadLimits);
  }
  @Get('uploads/:filename')
  async image(@Param('filename') filename:string,@Req() req:AuthRequest,@Res() res:Response) {
   if(!/^[a-f0-9-]+\.webp$/.test(filename)) throw new NotFoundException();
   const upload=await this.db.upload.findUnique({where:{filename}});
-  if(!upload) throw new NotFoundException();
+  if(!upload||upload.state!=='READY') throw new NotFoundException();
   const user=await this.current(req);
   const published=await this.db.project.findFirst({where:{status:'APPROVED',screenshots:{has:'/api/uploads/'+filename}},select:{id:true}});
   if(!published&&user?.id!==upload.ownerId&&!['FACULTY','ADMIN'].includes(user?.role||'')) throw new NotFoundException();
