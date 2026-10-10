@@ -13,7 +13,10 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm run dev -w @projecthub/api\" \"npm run dev -w @projecthub/web\"",
     "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npm run test:ops",
+    "test:unit": "npm test",
+    "test:ops": "node scripts/run-tests.cjs ops unit",
+    "test:integration": "npm run test:integration -w @projecthub/api",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:generate": "npm run prisma:generate -w @projecthub/api",
     "db:migrate": "npm run db:migrate -w @projecthub/api",
