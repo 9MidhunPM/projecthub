@@ -18,3 +18,6 @@
 @media(max-width:600px){.auth-panel h1{font-size:29px}}
 
 .editor-fields{padding:0;margin:0;border:0;min-width:0}.load-recovery{margin-top:24px}.form-panel small,.optional,.editor-help p{color:var(--muted)}.form-panel .form-error-summary>.text-link{display:inline-block;margin-top:12px}.upload-area:focus-within{outline:3px solid #7c98ff;outline-offset:4px}
+
+/* Screenshot ordering and partial-upload recovery. */
+.upload-disabled{opacity:.65;cursor:default}.upload-disabled input{cursor:default}.upload-progress{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}.upload-progress progress{width:100%;accent-color:var(--blue)}.upload-notice{font-size:12px!important;color:var(--green)!important}.upload-notice:empty{display:none}.upload-previews>figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:6px;background:#fff}.upload-previews>figure>img{display:block;aspect-ratio:1.4;height:auto;object-fit:cover}.upload-previews figcaption{font-size:11px;color:var(--muted);padding:7px 8px 3px}.upload-previews .screenshot-controls{display:flex;gap:2px;justify-content:space-between;padding:3px 5px 6px}.upload-previews .screenshot-controls button{position:static;box-shadow:none;min-width:30px;min-height:30px;padding:5px}

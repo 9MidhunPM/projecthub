@@ -3,10 +3,11 @@
 import {useEffect, useRef, useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
-import {ArrowLeft, Upload, X, Save, Send, Trash2} from 'lucide-react';
+import {ArrowLeft, Save, Send, Trash2} from 'lucide-react';
 import {api, Project, departments, projectTypes, isAbortError} from '@/lib/api';
 import {projectPayload, ProjectForm, projectToForm, validateProjectForm} from '@/lib/project-form';
 import {Guard, useApp, ErrorMessage, Loading} from './shell';
+import {ScreenshotEditor} from './screenshot-editor';
 
 type SaveAction = 'draft' | 'submit' | 'delete';
 
@@ -86,27 +87,6 @@ function Editor({id}: {id?: string}) {
     }
   }
 
-  async function upload(files: FileList | null) {
-    if (!files || uploading || pending.current) return;
-    setUploading(true);
-    setError('');
-    try {
-      if (screenshots.length + files.length > 8) throw new Error('You can add up to 8 screenshots.');
-      for (const file of Array.from(files)) {
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Please choose PNG, JPEG or WebP images.');
-        if (file.size > 5 * 1024 * 1024) throw new Error('Each screenshot must be 5 MB or smaller.');
-        const body = new FormData();
-        body.append('file', file);
-        const result = await api<{url: string}>('/uploads', {method: 'POST', body});
-        setScreenshots(previous => [...previous, result.url]);
-      }
-    } catch (failure) {
-      setError((failure as Error).message);
-    } finally {
-      setUploading(false);
-    }
-  }
-
   async function remove() {
     const currentId = savedId.current;
     if (!currentId || pending.current || uploading || !window.confirm('Delete this project? This cannot be undone.')) return;
@@ -154,10 +134,7 @@ function Editor({id}: {id?: string}) {
             </div>
           </section>
           <aside className="editor-side">
-            <section className="form-panel"><h2>Show your work</h2><p>A good screenshot helps people understand your idea at a glance.</p>
-              <label className="upload-area"><Upload size={26} aria-hidden="true"/><strong>{uploading ? 'Uploading…' : 'Choose screenshots'}</strong><span>PNG, JPEG or WebP · up to 5 MB each</span><input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={event => { void upload(event.target.files); event.target.value = ''; }} disabled={uploading || Boolean(busy)}/></label>
-              <div className="upload-previews">{screenshots.map((src, index) => <div key={`${src}-${index}`}><img src={src} alt={`Screenshot ${index + 1}`}/><button type="button" className="icon-button" disabled={uploading || Boolean(busy)} aria-label={`Remove screenshot ${index + 1}`} onClick={() => setScreenshots(previous => previous.filter((_, item) => item !== index))}><X size={16} aria-hidden="true"/></button></div>)}</div>
-            </section>
+            <ScreenshotEditor screenshots={screenshots} onChange={setScreenshots} onUploadingChange={setUploading} disabled={Boolean(busy)}/>
             <section className="editor-help"><h3>Make it yours.</h3><p>Use your own screenshots and credit everyone who helped. Your project will be reviewed by faculty before it appears in Explore.</p><p>Save draft keeps your work private. Submit for review sends it to faculty.</p></section>
             {savedId.current && <button type="button" className="button danger" disabled={Boolean(busy) || uploading} onClick={remove}><Trash2 size={16} aria-hidden="true"/>{busy === 'delete' ? 'Deleting…' : 'Delete project'}</button>}
           </aside>
