@@ -22,6 +22,10 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   const [loading, setLoading] = useState(true);
   const [sessionError, setSessionError] = useState('');
   const [toast, setToast] = useState('');
+  const [toastFocused, setToastFocused] = useState(false);
+  const toastElement = useRef<HTMLDivElement>(null);
+  const toastOrigin = useRef<HTMLElement | null>(null);
+  const main = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const logoutPending = useRef(false);
@@ -33,6 +37,22 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   const menuButton = useRef<HTMLButtonElement>(null);
   const path = usePathname();
   const router = useRouter();
+  const notify = useCallback((text: string) => {
+    if (!toastElement.current?.contains(document.activeElement)) {
+      toastOrigin.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+      setToastFocused(false);
+    }
+    setToast(text);
+  }, []);
+
+  function dismissToast() {
+    if (toastElement.current?.contains(document.activeElement)) {
+      const origin = toastOrigin.current;
+      (origin?.isConnected && !origin.matches(':disabled') ? origin : main.current)?.focus();
+    }
+    setToast('');
+    setToastFocused(false);
+  }
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!mounted.current || logoutPending.current || signal?.aborted) return;
@@ -93,10 +113,12 @@ export function AppProvider({children}: {children: React.ReactNode}) {
     };
   }, [open]);
   useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 6000);
+    if (!toast || toastFocused) return;
+    const timer = window.setTimeout(() => {
+      if (!toastElement.current?.contains(document.activeElement)) setToast('');
+    }, 6000);
     return () => window.clearTimeout(timer);
-  }, [toast]);
+  }, [toast, toastFocused]);
 
   async function logout() {
     if (logoutPending.current) return;
@@ -115,10 +137,10 @@ export function AppProvider({children}: {children: React.ReactNode}) {
       setUser(null);
       setSessionError('');
       setOpen(false);
-      setToast('You have signed out.');
+      notify('You have signed out.');
       router.push('/');
     } catch (failure) {
-      if (mounted.current && !controller.signal.aborted && !isAbortError(failure)) setToast((failure as Error).message);
+      if (mounted.current && !controller.signal.aborted && !isAbortError(failure)) notify((failure as Error).message);
     } finally {
       logoutPending.current = false;
       logoutRequest.current = null;
@@ -135,7 +157,7 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   ];
   const shareHref = user ? '/projects/new' : '/login?next=%2Fprojects%2Fnew';
 
-  return <AppContext.Provider value={{user, loading, sessionError, refresh, notify: setToast}}>
+  return <AppContext.Provider value={{user, loading, sessionError, refresh, notify}}>
     <a className="skip-link" href="#main-content">Skip to main content</a>
     <header ref={header} className="site-header">
       <div className="header-inner">
@@ -155,9 +177,11 @@ export function AppProvider({children}: {children: React.ReactNode}) {
         </div>
       </div>
     </header>
-    <main id="main-content" tabIndex={-1}>{children}</main>
+    <main ref={main} id="main-content" tabIndex={-1}>{children}</main>
     <footer className="footer"><Link className="brand" href="/"><Box size={21} aria-hidden="true"/><span>ProjectHub</span></Link><span>A home for student work.</span><span className="footer-end">Ideas deserve a place to grow.</span></footer>
-    {toast && <div className="toast" role="status" aria-live="polite"><span>{toast}</span><button aria-label="Dismiss notification" onClick={() => setToast('')}><X size={16} aria-hidden="true"/></button></div>}
+    {toast && <div ref={toastElement} className="toast" role="status" aria-live="polite" onFocusCapture={() => setToastFocused(true)} onBlurCapture={event => {
+      if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setToastFocused(false);
+    }}><span>{toast}</span><button aria-label="Dismiss notification" onClick={dismissToast}><X size={16} aria-hidden="true"/></button></div>}
   </AppContext.Provider>;
 }
 

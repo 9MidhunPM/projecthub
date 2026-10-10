@@ -35,11 +35,12 @@ function ReviewQueue() {
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [itemErrors, setItemErrors] = useState<Record<string, {message: string; conflict: boolean}>>({});
   const request = useRef<AbortController | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const {notify, user} = useApp();
 
   useEffect(() => () => { request.current?.abort(); }, []);
 
-  async function review(project: Project, decision: Decision) {
+  async function review(project: Project, decision: Decision, trigger: HTMLButtonElement) {
     if (request.current || project.ownerId === user?.id) return;
     const text = feedback[project.id]?.trim();
     if (decision === 'CHANGES_REQUESTED' && !text) {
@@ -49,6 +50,7 @@ function ReviewQueue() {
     }
     if (decision === 'APPROVED' && !window.confirm(`Approve “${project.title}”? Its description, team names, links, and screenshots will be publicly visible in Explore.`)) return;
     if (decision === 'HIDDEN' && !window.confirm(`Hide “${project.title}”? It will not be listed in Explore. The student will still be able to see it in their workspace.`)) return;
+    const restoreFocus = document.activeElement === trigger;
     const controller = new AbortController();
     request.current = controller;
     setBusy({id: project.id, decision});
@@ -56,6 +58,7 @@ function ReviewQueue() {
     try {
       await api(`/moderation/projects/${project.id}`, {method: 'PATCH', body: JSON.stringify({status: decision, feedback: text || '', expectedVersion: project.version}), signal: controller.signal});
       if (controller.signal.aborted) return;
+      if (window.location.pathname === '/moderation' && trigger.isConnected && restoreFocus && (document.activeElement === trigger || document.activeElement === document.body)) heading.current?.focus();
       setData(previous => previous ? {...previous, items: previous.items.filter(item => item.id !== project.id)} : previous);
       reload();
       setFeedback(previous => { const next = {...previous}; delete next[project.id]; return next; });
@@ -70,7 +73,7 @@ function ReviewQueue() {
   }
 
   return <div className="page-container">
-    <div className="page-title"><div><h1>Give good work a green light.</h1><p>Review student projects and help their ideas shine.</p></div><ShieldCheck size={32} aria-hidden="true"/></div>
+    <div className="page-title"><div><h1 ref={heading} tabIndex={-1} className="focus-target">Give good work a green light.</h1><p>Review student projects and help their ideas shine.</p></div><ShieldCheck size={32} aria-hidden="true"/></div>
     <nav className="tab-bar review-tabs" aria-label="Review queues">{queues.map(queue => <button key={queue.value} className={status === queue.value ? 'active' : ''} aria-pressed={status === queue.value} disabled={Boolean(busy)} onClick={() => change({status: queue.value, page: 1})}>{queue.label}</button>)}</nav>
     <ErrorMessage message={error}/>
     {error && <button className="button" disabled={Boolean(busy)} onClick={reload}>Try again</button>}
@@ -89,7 +92,7 @@ function ReviewQueue() {
             <p id={`feedback-hint-${project.id}`} className="review-feedback-hint">Required when requesting changes. Up to 2,000 characters.</p>
             <ErrorMessage message={itemError?.message || ''}/>
             {itemError?.conflict && <button className="button" disabled={Boolean(busy)} onClick={() => { setItemErrors(previous => ({...previous, [project.id]: {message: '', conflict: false}})); reload(); }}>Refresh this queue</button>}
-            <div className="review-actions">{project.status !== 'HIDDEN' && <button disabled={Boolean(busy)} className="button danger" onClick={() => void review(project, 'HIDDEN')}><EyeOff size={16} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'HIDDEN' ? 'Hiding…' : 'Hide project'}</button>}<div><button disabled={Boolean(busy)} className="button" onClick={() => void review(project, 'CHANGES_REQUESTED')}><MessageSquare size={16} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'CHANGES_REQUESTED' ? 'Requesting…' : 'Request changes'}</button><button disabled={Boolean(busy) || project.status !== 'PENDING'} className="button primary" onClick={() => void review(project, 'APPROVED')}><Check size={17} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'APPROVED' ? 'Approving…' : 'Approve project'}</button></div></div>
+            <div className="review-actions">{project.status !== 'HIDDEN' && <button disabled={Boolean(busy)} className="button danger" onClick={event => void review(project, 'HIDDEN', event.currentTarget)}><EyeOff size={16} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'HIDDEN' ? 'Hiding…' : 'Hide project'}</button>}<div><button disabled={Boolean(busy)} className="button" onClick={event => void review(project, 'CHANGES_REQUESTED', event.currentTarget)}><MessageSquare size={16} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'CHANGES_REQUESTED' ? 'Requesting…' : 'Request changes'}</button><button disabled={Boolean(busy) || project.status !== 'PENDING'} className="button primary" onClick={event => void review(project, 'APPROVED', event.currentTarget)}><Check size={17} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'APPROVED' ? 'Approving…' : 'Approve project'}</button></div></div>
           </>}
         </article>;
       })}</div>

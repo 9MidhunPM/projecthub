@@ -1,6 +1,6 @@
 'use client';
 
-import {useEffect} from 'react';
+import {useEffect, useRef} from 'react';
 import Link from 'next/link';
 import {Plus, Folder, Check, Clock, ArrowUpRight, Pencil, Image, Users, GitBranch, FileText, Bookmark} from 'lucide-react';
 import type {Listing, Project, ProjectStatus, WorkspaceListing} from '@/lib/api';
@@ -58,14 +58,16 @@ function WorkspaceContent() {
 export function Bookmarks() { return <Guard><BookmarkContent/></Guard>; }
 
 function BookmarkContent() {
+  const heading = useRef<HTMLHeadingElement>(null);
   const {query, ready, change} = useCollectionQuery('/bookmarks', bookmarkQueryOptions);
   const {data, error, loading, reload, setData} = useApiResource<Listing>(ready ? `/my/bookmarks?page=${query.page}&limit=12` : null);
   useEffect(() => {
     if (data && !loading && !error && query.page > Math.max(1, data.pages)) change({page: Math.max(1, data.pages)}, 'replace');
   }, [data, loading, error, query.page, change]);
 
-  function update(project: Project) {
+  function update(project: Project, focusOrigin?: HTMLButtonElement) {
     if (!project.bookmarked) {
+      if (window.location.pathname === '/bookmarks' && focusOrigin?.isConnected && (document.activeElement === focusOrigin || document.activeElement === document.body)) heading.current?.focus();
       setData(previous => previous ? {...previous, items: previous.items.filter(item => item.id !== project.id)} : previous);
       reload();
     } else {
@@ -74,7 +76,7 @@ function BookmarkContent() {
   }
 
   return <div className="page-container">
-    <div className="page-title"><div><h1>Saved inspiration</h1><p>Good ideas are worth coming back to.</p></div><Bookmark size={28} aria-hidden="true"/></div>
+    <div className="page-title"><div><h1 ref={heading} tabIndex={-1} className="focus-target">Saved inspiration</h1><p>Good ideas are worth coming back to.</p></div><Bookmark size={28} aria-hidden="true"/></div>
     <ErrorMessage message={error}/>
     {error && <div className="results-recovery"><button className="button" onClick={reload}>Try again</button>{data && <p className="muted">Your previous collection is shown below.</p>}</div>}
     {(!data && loading) || (data && query.page > Math.max(1, data.pages)) ? <Loading message="Loading saved projects…"/> : data?.items.length ? <>

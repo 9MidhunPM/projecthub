@@ -22,12 +22,23 @@ export function ScreenshotEditor({screenshots, onChange, onUploadingChange, disa
   const active = useRef<AbortController | null>(null);
   const errorSummary = useRef<HTMLDivElement>(null);
   const previews = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const removalFocus = useRef<{index: number; origin: HTMLButtonElement} | null>(null);
   const moveFocus = useRef<{index: number; direction: 'earlier' | 'later'} | null>(null);
   const uploading = progress !== null;
 
   useEffect(() => () => { active.current?.abort(); }, []);
   useEffect(() => { if (error) errorSummary.current?.focus(); }, [error]);
   useLayoutEffect(() => {
+    const removed = removalFocus.current;
+    if (removed) {
+      if (document.activeElement === document.body || document.activeElement === removed.origin) {
+        const figure = previews.current?.children[Math.min(removed.index, screenshots.length - 1)];
+        const next = figure?.querySelector<HTMLButtonElement>('button[data-remove]');
+        (next ?? fileInput.current)?.focus();
+      }
+      removalFocus.current = null;
+    }
     const target = moveFocus.current;
     if (!target) return;
     const figure = previews.current?.children[target.index];
@@ -74,6 +85,12 @@ export function ScreenshotEditor({screenshots, onChange, onUploadingChange, disa
     }
   }
 
+  function remove(index: number, origin: HTMLButtonElement) {
+    if (document.activeElement === origin) removalFocus.current = {index, origin};
+    onChange(previous => previous.filter((_, item) => item !== index));
+    setNotice(`Screenshot ${index + 1} removed. Save to keep this change.`);
+  }
+
   function move(from: number, to: number) {
     moveFocus.current = {index: to, direction: to < from ? 'earlier' : 'later'};
     onChange(previous => moveScreenshot(previous, from, to));
@@ -86,7 +103,7 @@ export function ScreenshotEditor({screenshots, onChange, onUploadingChange, disa
     <label className={`upload-area ${disabled || uploading || screenshots.length >= MAX_SCREENSHOTS ? 'upload-disabled' : ''}`}>
       <Upload size={26} aria-hidden="true"/><strong>{uploading ? 'Uploading screenshots…' : screenshots.length >= MAX_SCREENSHOTS ? 'All 8 screenshot slots filled' : 'Choose screenshots'}</strong>
       <span id="screenshots-hint">PNG, JPEG or WebP · up to 5 MB each · {screenshots.length}/8 added</span>
-      <input type="file" aria-label="Choose screenshots" aria-describedby="screenshots-hint" accept="image/png,image/jpeg,image/webp" multiple onChange={event => { void upload(Array.from(event.target.files ?? [])); event.target.value = ''; }} disabled={disabled || uploading || screenshots.length >= MAX_SCREENSHOTS}/>
+      <input ref={fileInput} type="file" aria-label="Choose screenshots" aria-describedby="screenshots-hint" accept="image/png,image/jpeg,image/webp" multiple onChange={event => { void upload(Array.from(event.target.files ?? [])); event.target.value = ''; }} disabled={disabled || uploading || screenshots.length >= MAX_SCREENSHOTS}/>
     </label>
     {progress && <div className="upload-progress" role="status"><progress max={progress.total} value={progress.completed} aria-label="Screenshot upload progress"/><span>Uploading {progress.completed + 1} of {progress.total}: {progress.name}</span></div>}
     <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage message={error}/></div>
@@ -99,7 +116,7 @@ export function ScreenshotEditor({screenshots, onChange, onUploadingChange, disa
         <div className="screenshot-controls">
           <button type="button" className="icon-button" disabled={disabled || uploading || index === 0} data-move="earlier" aria-label={`Move screenshot ${index + 1} earlier`} onClick={() => move(index, index - 1)}><ArrowLeft size={15} aria-hidden="true"/></button>
           <button type="button" className="icon-button" disabled={disabled || uploading || index === screenshots.length - 1} data-move="later" aria-label={`Move screenshot ${index + 1} later`} onClick={() => move(index, index + 1)}><ArrowRight size={15} aria-hidden="true"/></button>
-          <button type="button" className="icon-button" disabled={disabled || uploading} aria-label={`Remove screenshot ${index + 1}`} onClick={() => { onChange(previous => previous.filter((_, item) => item !== index)); setNotice(`Screenshot ${index + 1} removed. Save to keep this change.`); }}><X size={15} aria-hidden="true"/></button>
+          <button type="button" className="icon-button" disabled={disabled || uploading} data-remove aria-label={`Remove screenshot ${index + 1}`} onClick={event => remove(index, event.currentTarget)}><X size={15} aria-hidden="true"/></button>
         </div>
       </figure>)}
     </div>
