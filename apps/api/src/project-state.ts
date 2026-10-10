@@ -1,6 +1,12 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma, ProjectStatus } from '@prisma/client';
 
+export function ensureExpectedVersion(project: { version: number }, expectedVersion: number) {
+  if (project.version !== expectedVersion) {
+    throw new ConflictException('This project changed since you loaded it. Reload it and try again.');
+  }
+}
+
 export async function guardProjectWrite<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();

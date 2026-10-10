@@ -35,7 +35,13 @@ export class ProjectDto {
  @OptionalField() @Trimmed() @IsString() @MaxLength(2000) @Matches(/^(https?:\/\/\S+)?$/) demoUrl?: string;
  @OptionalField() @IsArray() @ArrayMaxSize(8) @Matches(/^(\/api\/uploads\/[a-f0-9-]+\.webp|\/examples\/(campus-connect|ecotrack|study-space)\.png)$/,{each:true}) screenshots?: string[];
 }
-export class ModerationDto {
+export class ProjectVersionDto {
+ @IsInt() @Min(0) @Max(2147483647) expectedVersion!: number;
+}
+export class UpdateProjectDto extends ProjectDto {
+ @IsInt() @Min(0) @Max(2147483647) expectedVersion!: number;
+}
+export class ModerationDto extends ProjectVersionDto {
  @IsIn(['APPROVED','CHANGES_REQUESTED','HIDDEN']) status!: 'APPROVED'|'CHANGES_REQUESTED'|'HIDDEN';
  @OptionalField() @Trimmed() @IsString() @MaxLength(2000) feedback?: string;
 }

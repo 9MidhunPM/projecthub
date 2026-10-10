@@ -55,8 +55,8 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  assert.equal((await fetch(baseUrl+'/api/uploads',{method:'POST',headers:{Origin:'http://localhost:3000',Cookie:a.cookie},body:extraFile})).status,400);
  const p=await request('/projects','POST',{...body,screenshots:[uploaded]},a.cookie);assert.equal(p.status,201);const id=p.data.id;
  assert.equal((await request('/projects/'+id)).status,404);
- assert.equal((await request('/projects/'+id,'PATCH',body,b.cookie)).status,404);
- assert.equal((await request('/moderation/projects/'+id,'PATCH',{status:'HIDDEN'},reviewer.cookie)).status,400);
+ assert.equal((await request('/projects/'+id,'PATCH',{...body,expectedVersion:0},b.cookie)).status,404);
+ assert.equal((await request('/moderation/projects/'+id,'PATCH',{status:'HIDDEN',expectedVersion:0},reviewer.cookie)).status,400);
  assert.equal((await request('/moderation/projects','GET',undefined,a.cookie)).status,403);
  assert.equal((await request('/admin/users','GET',undefined,reviewer.cookie)).status,403);
  assert.equal((await request('/admin/users/'+b.data.id+'/role','PATCH',{role:'FACULTY'},a.cookie)).status,403);
@@ -66,13 +66,13 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  assert.equal((await request('/projects','POST',{...body,githubUrl:'javascript:alert(1)'},a.cookie)).status,400);
  assert.equal((await request('/projects','POST',{...body,screenshots:[uploaded]},b.cookie)).status,400);
  const unsafeForm=new FormData();unsafeForm.append('file',new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'],{type:'image/svg+xml'}),'x.svg');assert.equal((await fetch(baseUrl+'/api/uploads',{method:'POST',headers:{Origin:'http://localhost:3000',Cookie:a.cookie},body:unsafeForm})).status,400);
- const submissions=await Promise.all([request('/projects/'+id+'/submit','POST',{},a.cookie),request('/projects/'+id+'/submit','POST',{},a.cookie)]);
+ const submissions=await Promise.all([request('/projects/'+id+'/submit','POST',{expectedVersion:0},a.cookie),request('/projects/'+id+'/submit','POST',{expectedVersion:0},a.cookie)]);
  assert.equal(submissions.filter(result=>result.status===201).length,1);
  assert(submissions.some(result=>[400,409].includes(result.status)));
  assert.equal((await db.project.findUniqueOrThrow({where:{id}})).version,1);
  assert.equal((await request('/projects')).data.items.some((p:any)=>p.id===id),false);
- assert.equal((await request('/moderation/projects/'+id,'PATCH',{status:'CHANGES_REQUESTED'},reviewer.cookie)).status,400);
- const approvals=await Promise.all([request('/moderation/projects/'+id,'PATCH',{status:'APPROVED'},reviewer.cookie),request('/moderation/projects/'+id,'PATCH',{status:'APPROVED'},reviewer.cookie)]);
+ assert.equal((await request('/moderation/projects/'+id,'PATCH',{status:'CHANGES_REQUESTED',expectedVersion:1},reviewer.cookie)).status,400);
+ const approvals=await Promise.all([request('/moderation/projects/'+id,'PATCH',{status:'APPROVED',expectedVersion:1},reviewer.cookie),request('/moderation/projects/'+id,'PATCH',{status:'APPROVED',expectedVersion:1},reviewer.cookie)]);
  assert.equal(approvals.filter(result=>result.status===200).length,1);
  assert(approvals.some(result=>[400,409].includes(result.status)));
  assert.equal(await db.audit.count({where:{targetId:id,action:'MODERATE_PROJECT'}}),1);
@@ -83,7 +83,7 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  assert.equal((await db.project.findUniqueOrThrow({where:{id}})).version,2);
  for(let i=0;i<2;i++)assert.equal((await request('/projects/'+id+'/like','PUT',{},b.cookie)).data.likes,1);
  for(let i=0;i<2;i++)assert.equal((await request('/projects/'+id+'/bookmark','PUT',{},b.cookie)).data.bookmarked,true);
- assert.equal((await request('/projects/'+id,'PATCH',body,a.cookie)).data.status,'DRAFT');assert.equal((await request('/projects/'+id)).status,404);
+ assert.equal((await request('/projects/'+id,'PATCH',{...body,expectedVersion:2},a.cookie)).data.status,'DRAFT');assert.equal((await request('/projects/'+id)).status,404);
  await unlink(join(temporaryUploads,uploaded.split('/').pop()!));
  const missingImage=await fetch(baseUrl+uploaded,{headers:{Cookie:a.cookie}});
  assert.equal(missingImage.status,404);

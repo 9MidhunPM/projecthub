@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { guardProjectWrite, ensureModerationTransition } from '../src/project-state';
+import { guardProjectWrite, ensureModerationTransition, ensureExpectedVersion } from '../src/project-state';
 import { ApiController } from '../dist/controller';
 
 test('stale project writes become actionable conflicts without hiding unrelated errors', async () => {
@@ -40,9 +40,26 @@ test('owner mutations guard the observed content version and preserve authorizat
   } as any;
   const controller = new ApiController(db, { resolve: async () => {} } as any);
   const request = { user: { id: 'owner', role: 'STUDENT' } } as any;
-  await controller.update('project', { screenshots: [] } as any, request);
-  await controller.submit('project', request);
-  await controller.remove('project', request);
+  await controller.update('project', { screenshots: [], expectedVersion: 7 } as any, request);
+  await controller.submit('project', request, { expectedVersion: 7 });
+  await controller.remove('project', request, { expectedVersion: 7 });
   for (const write of writes) assert.deepEqual(write.where, { id: 'project', ownerId: 'owner', version: 7, status: 'DRAFT' });
-  for (const write of writes.slice(0, 2)) assert.deepEqual(write.data.version, { increment: 1 });
+  for (const write of writes.slice(0, 2)) {
+    assert.deepEqual(write.data.version, { increment: 1 });
+    assert.equal('expectedVersion' in write.data, false);
+  }
+});
+
+test('a stale client version is rejected before any edit, submission, deletion, or review write', async () => {
+  ensureExpectedVersion({ version: 7 }, 7);
+  assert.throws(() => ensureExpectedVersion({ version: 7 }, 6), ConflictException);
+  const project = { id: 'project', ownerId: 'owner', status: 'PENDING', version: 7 };
+  const db = { project: { findUnique: async () => project, update: () => assert.fail('stale write'), delete: () => assert.fail('stale delete') }, $transaction: () => assert.fail('stale audit') } as any;
+  const controller = new ApiController(db, { resolve: async () => {} } as any);
+  const owner = { user: { id: 'owner', role: 'STUDENT' } } as any;
+  const reviewer = { user: { id: 'reviewer', role: 'FACULTY' } } as any;
+  await assert.rejects(controller.update('project', { expectedVersion: 6 } as any, owner), ConflictException);
+  await assert.rejects(controller.submit('project', owner, { expectedVersion: 6 }), ConflictException);
+  await assert.rejects(controller.remove('project', owner, { expectedVersion: 6 }), ConflictException);
+  await assert.rejects(controller.moderate('project', reviewer, { status: 'APPROVED', expectedVersion: 6 }), ConflictException);
 });

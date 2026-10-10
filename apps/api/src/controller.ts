@@ -8,11 +8,11 @@ import { normalizeUpload } from './images';
 import { Prisma, ProjectStatus } from '@prisma/client';
 import { Db } from './db';
 import { AuthRequest, AuthGuard, AuthService, userSelect } from './auth';
-import { LoginDto, SignupDto, ProfileDto, ProjectDto, ModerationDto, RoleDto } from './dto';
+import { LoginDto, SignupDto, ProfileDto, ProjectDto, UpdateProjectDto, ProjectVersionDto, ModerationDto, RoleDto } from './dto';
 import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie, sessionTokenId, DUMMY_PASSWORD_HASH } from './security';
 import { parseProjectQuery } from './project-query';
 import { projectInclude as include, ProjectWithCounts, shapeProjects } from './project-shape';
-import { ensureModerationTransition, guardProjectWrite } from './project-state';
+import { ensureExpectedVersion, ensureModerationTransition, guardProjectWrite } from './project-state';
 import { persistUpload, UploadCapacityInterceptor } from './uploads';
 import { createSession, SESSION_LIFETIME_MS } from './sessions';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
@@ -74,27 +74,31 @@ export class ApiController {
  private async validateScreenshots(body:ProjectDto,userId:string){for(const url of body.screenshots||[]){if(['/examples/campus-connect.png','/examples/ecotrack.png','/examples/study-space.png'].includes(url))continue;try{const filename=url.split('/').pop()!;const upload=await this.db.upload.findUnique({where:{filename}});if(!upload||upload.ownerId!==userId)throw Error();await stat(resolve(uploadDir,filename));}catch{throw new BadRequestException('Screenshot does not exist');}}for(const value of [body.githubUrl,body.demoUrl])if(value){try{const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error();}catch{throw new BadRequestException('Links must be valid HTTP or HTTPS URLs');}}}
  @Post('projects') @UseGuards(AuthGuard) async create(@Body() body:ProjectDto,@Req() req:AuthRequest){await this.validateScreenshots(body,req.user!.id);return this.shape(await this.db.project.create({data:{...body,screenshots:body.screenshots||[],ownerId:req.user!.id},include}),req.user!.id);}
  @Patch('projects/:id') @UseGuards(AuthGuard)
- async update(@Param('id') id:string,@Body() body:ProjectDto,@Req() req:AuthRequest) {
+ async update(@Param('id') id:string,@Body() body:UpdateProjectDto,@Req() req:AuthRequest) {
   const project=await this.project(id,req);
   ensureOwner(project,req.user!);
-  await this.validateScreenshots(body,req.user!.id);
+  const {expectedVersion,...changes}=body;
+  ensureExpectedVersion(project,expectedVersion);
+  await this.validateScreenshots(changes,req.user!.id);
   const updated=await guardProjectWrite(()=>this.db.project.update({
    where:{id,ownerId:req.user!.id,version:project.version,status:project.status},
-   data:{...body,status:'DRAFT',feedback:'',version:{increment:1}},include,
+   data:{...changes,status:'DRAFT',feedback:'',version:{increment:1}},include,
   }));
   return this.shape(updated,req.user!.id);
  }
  @Delete('projects/:id') @UseGuards(AuthGuard)
- async remove(@Param('id') id:string,@Req() req:AuthRequest) {
+ async remove(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ProjectVersionDto) {
   const project=await this.project(id,req);
   ensureOwner(project,req.user!);
+  ensureExpectedVersion(project,body.expectedVersion);
   await guardProjectWrite(()=>this.db.project.delete({where:{id,ownerId:req.user!.id,version:project.version,status:project.status}}));
   return {ok:true};
  }
  @Post('projects/:id/submit') @UseGuards(AuthGuard)
- async submit(@Param('id') id:string,@Req() req:AuthRequest) {
+ async submit(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ProjectVersionDto) {
   const project=await this.project(id,req);
   ensureOwner(project,req.user!);
+  ensureExpectedVersion(project,body.expectedVersion);
   if(!['DRAFT','CHANGES_REQUESTED'].includes(project.status)) throw new BadRequestException('Only drafts or changes-requested projects can be submitted');
   const updated=await guardProjectWrite(()=>this.db.project.update({
    where:{id,ownerId:req.user!.id,version:project.version,status:project.status},
@@ -140,6 +144,7 @@ export class ApiController {
   ensureReviewer(req.user!);
   const current=await this.project(id,req);
   if(current.ownerId===req.user!.id) throw new ForbiddenException('You cannot review your own project');
+  ensureExpectedVersion(current,body.expectedVersion);
   ensureModerationTransition(current.status,body.status,body.feedback);
   const [project]=await guardProjectWrite(()=>this.db.$transaction([
    this.db.project.update({

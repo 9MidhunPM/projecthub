@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
-import { LoginDto, ProfileDto, ProjectDto, SignupDto, ModerationDto } from '../dist/dto';
+import { LoginDto, ProfileDto, ProjectDto, SignupDto, ModerationDto, UpdateProjectDto, ProjectVersionDto } from '../dist/dto';
 
 const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
 const validate = (metatype: any, value: unknown) => pipe.transform(value, { type: 'body', metatype });
@@ -19,10 +19,10 @@ test('optional DTO fields reject null instead of passing it to non-null database
   for (const field of ['githubUrl', 'demoUrl', 'screenshots']) {
     await assert.rejects(validate(ProjectDto, { ...project, [field]: null }), BadRequestException);
   }
-  await assert.rejects(validate(ModerationDto, { status: 'APPROVED', feedback: null }), BadRequestException);
+  await assert.rejects(validate(ModerationDto, { status: 'APPROVED', feedback: null, expectedVersion: 0 }), BadRequestException);
   assert(Object.values(await validate(ProfileDto, {})).every(value => value === undefined));
   await validate(ProjectDto, project);
-  await validate(ModerationDto, { status: 'APPROVED' });
+  await validate(ModerationDto, { status: 'APPROVED', expectedVersion: 0 });
 });
 
 test('human-readable values are trimmed before minimum length validation', async () => {
@@ -51,4 +51,15 @@ test('optional empty strings and explicit empty screenshot lists retain clear-fi
   assert.equal(result.demoUrl, '');
   assert.deepEqual(result.screenshots, []);
   assert.equal((await validate(ProfileDto, { bio: '  ' })).bio, '');
+});
+
+test('existing-project mutations require a nonnegative integer version and create rejects it', async () => {
+  for (const [dto, body] of [[UpdateProjectDto, project], [ProjectVersionDto, {}], [ModerationDto, { status: 'APPROVED' }]] as const) {
+    for (const expectedVersion of [undefined, null, -1, 0.5, '0', true, 2147483648]) {
+      await assert.rejects(validate(dto, { ...body, expectedVersion }), BadRequestException);
+    }
+    assert.equal((await validate(dto, { ...body, expectedVersion: 0 })).expectedVersion, 0);
+    assert.equal((await validate(dto, { ...body, expectedVersion: 12 })).expectedVersion, 12);
+  }
+  await assert.rejects(validate(ProjectDto, { ...project, expectedVersion: 0 }), BadRequestException);
 });
