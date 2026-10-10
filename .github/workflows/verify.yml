@@ -76,9 +76,9 @@ jobs:
       - run: npm run test:fullstack
 
   compose-config:
-    name: Validate container configurations
+    name: Container configurations and isolated Docker runtime
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -90,3 +90,8 @@ jobs:
         env:
           POSTGRES_PASSWORD: ci-only-placeholder
       - run: docker compose -f compose.dokploy.yaml config --quiet
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Build and smoke-test the isolated Compose runtime
+        run: node scripts/docker-smoke.cjs
