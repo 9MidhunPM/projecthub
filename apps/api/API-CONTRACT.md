@@ -1,6 +1,7 @@
 # ProjectHub API
 Base `/api`, JSON, browser credentials included. Cookies are httpOnly; mutations require Origin matching WEB_ORIGIN (default http://localhost:3000). Error shape `{statusCode,message}`.
 Optional request fields may be omitted but cannot be `null`. Human-readable text, email, URLs, and individual technology/team names are trimmed before validation; passwords are preserved exactly. Empty strings clear optional text fields, and an empty screenshot array clears screenshots.
+- GET /health -> {ok:true}: process liveness, independent of database availability. GET /health/ready -> {ok:true,database:"up"}: database readiness; returns 503 with a generic message on query failure and is never cached. Neither endpoint requires authentication.
 - POST /auth/signup {name,email,password,department,semester}; POST /auth/login {email,password}; POST /auth/logout; GET /auth/me -> user object (401 logged out).
   Logout is idempotent and clears the session cookie even when the session is missing, expired, or already revoked. `COOKIE_SECURE=true` enables secure cookies in every environment; production defaults to secure cookies.
 - PATCH /profile {name?,department?,semester?,bio?} -> user.

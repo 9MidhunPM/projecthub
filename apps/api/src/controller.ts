@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Post, Put, Patch, Param, Query, Req, Res, UseGuards, UseInterceptors, UploadedFile, BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ConflictException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post, Put, Patch, Param, Query, Req, Res, UseGuards, UseInterceptors, UploadedFile, BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ConflictException, ServiceUnavailableException, Header } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -21,6 +21,16 @@ export class ApiController {
  private async project(id:string,req:AuthRequest){const p=await this.db.project.findUnique({where:{id},include});if(!p)throw new NotFoundException('Project not found');ensureVisible(p,await this.current(req));return p;}
  private async shape(project:ProjectWithCounts,userId?:string){return (await shapeProjects(this.db,[project],userId))[0];}
  @Get('health') health(){return {ok:true};}
+ @Get('health/ready')
+ @Header('Cache-Control','no-store')
+ async readiness() {
+  try {
+   await this.db.$queryRaw`SELECT 1`;
+   return {ok:true,database:'up'};
+  } catch {
+   throw new ServiceUnavailableException('Database is unavailable');
+  }
+ }
  @Post('auth/signup') async signup(@Body() body:SignupDto,@Res({passthrough:true}) res:Response){const email=body.email.trim().toLowerCase();try{const user=await this.db.user.create({data:{email,name:body.name,department:body.department,semester:body.semester,passwordHash:await hashPassword(body.password)},select:userSelect});await this.session(user.id,res);return user;}catch(e){if(e instanceof Prisma.PrismaClientKnownRequestError && e.code==='P2002')throw new ConflictException('An account with this email already exists');throw e;}}
  @Post('auth/login') async login(@Body() body:LoginDto,@Res({passthrough:true}) res:Response){const user=await this.db.user.findUnique({where:{email:body.email.trim().toLowerCase()}});if(!user || !await verifyPassword(body.password,user.passwordHash))throw new UnauthorizedException('Invalid email or password');await this.session(user.id,res);const {passwordHash,...safe}=user;return safe;}
  @Post('auth/logout')

@@ -28,6 +28,11 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  const { bootstrap } = await import('../dist/main');
  app = await bootstrap({ port: 0, host: '127.0.0.1' });
  baseUrl = await app.getUrl();
+ assert.deepEqual((await request('/health')).data,{ok:true});
+ const readiness = await fetch(baseUrl+'/api/health/ready');
+ assert.equal(readiness.status,200);
+ assert.equal(readiness.headers.get('cache-control'),'no-store');
+ assert.deepEqual(await readiness.json(),{ok:true,database:'up'});
  const a=await signup('Owner'),b=await signup('Other'),reviewer=await signup('Reviewer'),admin=await signup('Admin');await db.user.update({where:{id:admin.data.id},data:{role:'ADMIN'}});await db.user.update({where:{id:reviewer.data.id},data:{role:'FACULTY'}});
  assert.equal((await request('/auth/signup','POST',{name:'Attack',email:`attack-${suffix}@test.example`,password:'a-secure-test-password',department:'CS',semester:1,role:'ADMIN'})).status,400);
  assert.equal((await request('/auth/login','POST',{email:`Owner-${suffix}@test.example`,password:'a-secure-test-password'},'','https://evil.example')).status,403);
