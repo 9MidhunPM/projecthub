@@ -127,7 +127,7 @@ test('quiescent fictional database and uploads survive an isolated logical resto
 
   const port = await unusedPort();
   const base = `http://127.0.0.1:${port}`;
-  api = startProcess(process.execPath, ['apps/api/dist/main.js'], { cwd: root, env: { ...process.env, NODE_ENV: 'test', DATABASE_URL: targets.targetUrl, TEST_DATABASE_URL: targets.targetUrl, PORT: String(port), WEB_ORIGIN: base, COOKIE_SECURE: 'false', UPLOAD_DIR: restoredFiles, UPLOAD_MAX_BYTES: String(image.length * 2 + 12), UPLOAD_MAX_FILES: '4' } });
+  api = startProcess(process.execPath, ['scripts/test/support/start-loopback-api.cjs'], { cwd: root, env: { ...process.env, NODE_ENV: 'test', DATABASE_URL: targets.targetUrl, TEST_DATABASE_URL: targets.targetUrl, PORT: String(port), WEB_ORIGIN: base, COOKIE_SECURE: 'false', UPLOAD_DIR: restoredFiles, UPLOAD_MAX_BYTES: String(image.length * 2 + 12), UPLOAD_MAX_FILES: '4' } });
   async function request(path, { who, method = 'GET', body, raw = false } = {}) {
     const multipart = body instanceof FormData;
     const response = await fetch(base + '/api' + path, { method, headers: { Origin: base, ...(who ? { Cookie: 'ph_session=' + tokens[who] } : {}), ...(!multipart && body ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body), signal: AbortSignal.timeout(5000) });

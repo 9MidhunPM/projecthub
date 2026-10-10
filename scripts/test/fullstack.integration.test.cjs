@@ -116,7 +116,7 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
   await assert.rejects(access(join(runtime, 'apps/api/src')));
   await assert.rejects(access(join(runtime, 'node_modules/jsdom')));
   await assert.rejects(access(join(runtime, 'node_modules/@testing-library')));
-  api = startProcess(process.execPath, ['apps/api/dist/main.js'], { cwd: root, env: { ...env, PORT: String(apiPort) } });
+  api = startProcess(process.execPath, ['scripts/test/support/start-loopback-api.cjs'], { cwd: root, env: { ...env, PORT: String(apiPort) } });
   await waitForHttp(`${env.API_INTERNAL_URL}/api/health/ready`, api);
   const runtimeEnv = { ...env, NODE_ENV: 'production', PORT: String(webPort), HOSTNAME: '127.0.0.1' };
   delete runtimeEnv.NODE_PATH;

@@ -51,3 +51,20 @@ test('fixture manifests detect same-size corruption and reject symlinks', async 
     await assert.rejects(fileManifest(directory), /regular files/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+
+test('synthetic API explicitly binds loopback and refuses an unexpected actual listener', async () => {
+  const { startLoopbackApi } = require('./support/start-loopback-api.cjs');
+  let closed = false;
+  const app = { getHttpServer: () => ({ address: () => ({ address: '127.0.0.1', port: 12345 }) }), close: async () => { closed = true; } };
+  assert.equal(await startLoopbackApi(async options => {
+    assert.deepEqual(options, { host: '127.0.0.1' });
+    return app;
+  }), app);
+  assert.equal(closed, false);
+  for (const address of ['0.0.0.0', '::', null]) {
+    closed = false;
+    await assert.rejects(startLoopbackApi(async () => ({ ...app, getHttpServer: () => ({ address: () => address === null ? null : { address } }) })), /only on loopback/);
+    assert.equal(closed, true, 'A listener with unexpected binding must be closed.');
+  }
+});
