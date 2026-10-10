@@ -86,3 +86,16 @@ test('a debounced gallery search cannot replace the URL after route navigation',
   assert.equal(window.location.pathname, '/projects/project-1');
   assert.equal(calls, 1);
 });
+
+test('late out-of-range responses cannot canonicalize a destination outside Explore', async () => {
+  window.history.replaceState({}, '', '/?page=2');
+  const response = deferred<Response>();
+  let calls = 0;
+  galleryFetch(async () => { calls += 1; return response.promise; });
+  renderApp(<Explore/>);
+  await waitFor(() => assert.equal(calls, 1));
+  window.history.pushState({}, '', '/projects/project-1');
+  await act(async () => response.resolve(Response.json({...empty, page: 2})));
+  assert.equal(window.location.pathname, '/projects/project-1');
+  assert.equal(window.location.search, '');
+});

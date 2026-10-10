@@ -53,7 +53,7 @@ export default function Explore() {
         const params = new URLSearchParams(search);
         params.set('limit', '6');
         const result = await api<Listing>(`/projects?${params}`, {signal: controller.signal});
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || window.location.pathname !== '/') return;
         const lastPage = Math.max(1, result.pages);
         if (query.page > lastPage) {
           const corrected = {...query, page: lastPage};
@@ -68,9 +68,9 @@ export default function Explore() {
           focusAfterPage.current = false;
         }
       } catch (failure) {
-        if (!controller.signal.aborted && !isAbortError(failure)) setError((failure as Error).message);
+        if (!controller.signal.aborted && window.location.pathname === '/' && !isAbortError(failure)) setError((failure as Error).message);
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted && window.location.pathname === '/') setLoading(false);
       }
     }, 250);
     return () => {
