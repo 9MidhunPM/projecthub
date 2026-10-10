@@ -1,42 +1,15 @@
 import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-
-function text(query: Record<string, unknown>, name: string, maxLength: number): string | undefined {
-  const value = query[name];
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string' || value.length > maxLength) {
-    throw new BadRequestException(`Invalid ${name} query parameter`);
-  }
-  return value.trim() || undefined;
-}
-
-function integer(query: Record<string, unknown>, name: string, max: number, fallback?: number): number {
-  const raw = query[name];
-  if (raw === undefined && fallback !== undefined) return fallback;
-  if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) {
-    throw new BadRequestException(`Invalid ${name}: use an integer from 1 to ${max}`);
-  }
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value > max) {
-    throw new BadRequestException(`Invalid ${name}: use an integer from 1 to ${max}`);
-  }
-  return value;
-}
+import { queryInteger, queryKeys, queryPage, queryText } from './query-params';
 
 export function parseProjectQuery(query: Record<string, unknown>) {
-  const supported = new Set(['q', 'department', 'semester', 'type', 'tech', 'page', 'limit', 'sort']);
-  if (Object.keys(query).some(key => !supported.has(key))) {
-    // Express's simple parser keeps bracket syntax as literal keys instead of
-    // nested objects. Reject those too rather than silently dropping filters.
-    throw new BadRequestException('Unsupported project query parameter');
-  }
-  const page = integer(query, 'page', 10000, 1);
-  const limit = integer(query, 'limit', 48, 12);
-  const search = text(query, 'q', 200);
-  const department = text(query, 'department', 80);
-  const type = text(query, 'type', 60);
-  const technology = text(query, 'tech', 40);
-  const sort = text(query, 'sort', 10) ?? 'recent';
+  queryKeys(query, ['q', 'department', 'semester', 'type', 'tech', 'page', 'limit', 'sort']);
+  const { page, limit } = queryPage(query, 12, 48);
+  const search = queryText(query, 'q', 200);
+  const department = queryText(query, 'department', 80);
+  const type = queryText(query, 'type', 60);
+  const technology = queryText(query, 'tech', 40);
+  const sort = queryText(query, 'sort', 10) ?? 'recent';
   if (sort !== 'recent' && sort !== 'popular') {
     throw new BadRequestException('Invalid sort: use recent or popular');
   }
@@ -44,7 +17,7 @@ export function parseProjectQuery(query: Record<string, unknown>) {
   const where: Prisma.ProjectWhereInput = { status: 'APPROVED' };
   if (search) where.OR = ['title', 'description'].map(field => ({ [field]: { contains: search, mode: 'insensitive' } }));
   if (department) where.department = department;
-  if (query.semester !== undefined) where.semester = integer(query, 'semester', 12);
+  if (query.semester !== undefined) where.semester = queryInteger(query, 'semester', 12);
   if (type) where.type = type;
   if (technology) where.techStack = { has: technology };
 

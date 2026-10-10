@@ -68,7 +68,7 @@ test('two-client snapshots cannot overwrite or approve unseen replacement conten
     const firstSubmission = await request(path + '/submit', 'POST', { expectedVersion: editB.body.version }, owner.cookie);
     assert.equal(firstSubmission.status, 201);
     assert.equal(firstSubmission.body.version, 2);
-    const reviewerSnapshot = (await request('/moderation/projects', 'GET', undefined, reviewer.cookie)).body.find((project: any) => project.id === creation.body.id);
+    const reviewerSnapshot = (await request('/moderation/projects', 'GET', undefined, reviewer.cookie)).body.items.find((project: any) => project.id === creation.body.id);
     assert.equal(reviewerSnapshot.title, 'Replacement content B');
     assert.equal(reviewerSnapshot.version, 2);
 

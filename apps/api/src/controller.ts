@@ -16,6 +16,8 @@ import { ensureExpectedVersion, ensureModerationTransition, guardProjectWrite } 
 import { persistUpload, UploadCapacityInterceptor } from './uploads';
 import { createSession, SESSION_LIFETIME_MS } from './sessions';
 import { changeUserRole } from './roles';
+import { parseProjectCollectionQuery } from './collection-query';
+import { pageResult } from './query-params';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
@@ -69,8 +71,38 @@ export class ApiController {
   ]);
   return {items:await shapeProjects(this.db,items,user?.id),total,page,limit,pages:Math.ceil(total/limit)};
  }
- @Get('my/projects') @UseGuards(AuthGuard) async mine(@Req() req:AuthRequest){return shapeProjects(this.db,await this.db.project.findMany({where:{ownerId:req.user!.id},include,orderBy:{updatedAt:'desc'}}),req.user!.id);}
- @Get('my/bookmarks') @UseGuards(AuthGuard) async bookmarks(@Req() req:AuthRequest){return shapeProjects(this.db,await this.db.project.findMany({where:{status:'APPROVED',bookmarks:{some:{userId:req.user!.id}}},include,orderBy:{createdAt:'desc'}}),req.user!.id);}
+ private async projectPage(where:Prisma.ProjectWhereInput,orderBy:Prisma.ProjectOrderByWithRelationInput[],pagination:{page:number;limit:number;skip:number},userId:string) {
+  return this.db.$transaction(async tx=>{
+   const [items,total]=await Promise.all([
+    tx.project.findMany({where,include,orderBy,skip:pagination.skip,take:pagination.limit}),
+    tx.project.count({where}),
+   ]);
+   return pageResult(await shapeProjects(tx,items,userId),total,pagination);
+  },{isolationLevel:Prisma.TransactionIsolationLevel.RepeatableRead});
+ }
+ @Get('my/projects') @UseGuards(AuthGuard)
+ async mine(@Req() req:AuthRequest,@Query() query:Record<string,unknown>) {
+  const pagination=parseProjectCollectionQuery(query,'workspace');
+  const ownerId=req.user!.id;
+  return this.db.$transaction(async tx=>{
+   const [items,groups]=await Promise.all([
+    tx.project.findMany({where:{ownerId,...(pagination.status?{status:pagination.status}:{})},include,orderBy:[{updatedAt:'desc'},{id:'desc'}],skip:pagination.skip,take:pagination.limit}),
+    tx.project.groupBy({by:['status'],where:{ownerId},_count:{_all:true}}),
+   ]);
+   const byStatus:Record<ProjectStatus,number>={DRAFT:0,PENDING:0,APPROVED:0,CHANGES_REQUESTED:0,HIDDEN:0};
+   for(const group of groups) byStatus[group.status]=group._count._all;
+   const total=Object.values(byStatus).reduce((sum,count)=>sum+count,0);
+   return {
+    ...pageResult(await shapeProjects(tx,items,ownerId),pagination.status?byStatus[pagination.status]:total,pagination),
+    summary:{total,published:byStatus.APPROVED,pending:byStatus.PENDING,byStatus},
+   };
+  },{isolationLevel:Prisma.TransactionIsolationLevel.RepeatableRead});
+ }
+ @Get('my/bookmarks') @UseGuards(AuthGuard)
+ bookmarks(@Req() req:AuthRequest,@Query() query:Record<string,unknown>) {
+  const pagination=parseProjectCollectionQuery(query,'bookmarks');
+  return this.projectPage({status:'APPROVED',bookmarks:{some:{userId:req.user!.id}}},[{createdAt:'desc'},{id:'desc'}],pagination,req.user!.id);
+ }
  @Get('projects/:id') async detail(@Param('id') id:string,@Req() req:AuthRequest){return this.shape(await this.project(id,req),req.user?.id);}
  private async validateScreenshots(body:ProjectDto,userId:string){for(const url of body.screenshots||[]){if(['/examples/campus-connect.png','/examples/ecotrack.png','/examples/study-space.png'].includes(url))continue;try{const filename=url.split('/').pop()!;const upload=await this.db.upload.findUnique({where:{filename}});if(!upload||upload.ownerId!==userId)throw Error();await stat(resolve(uploadDir,filename));}catch{throw new BadRequestException('Screenshot does not exist');}}for(const value of [body.githubUrl,body.demoUrl])if(value){try{const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error();}catch{throw new BadRequestException('Links must be valid HTTP or HTTPS URLs');}}}
  @Post('projects') @UseGuards(AuthGuard) async create(@Body() body:ProjectDto,@Req() req:AuthRequest){await this.validateScreenshots(body,req.user!.id);return this.shape(await this.db.project.create({data:{...body,screenshots:body.screenshots||[],ownerId:req.user!.id},include}),req.user!.id);}
@@ -139,7 +171,12 @@ export class ApiController {
    throw error;
   }
  }
- @Get('moderation/projects') @UseGuards(AuthGuard) async queue(@Req() req:AuthRequest,@Query('status') status='PENDING'){ensureReviewer(req.user!);if(!Object.values(ProjectStatus).includes(status as ProjectStatus))throw new BadRequestException('Invalid status');return shapeProjects(this.db,await this.db.project.findMany({where:{status:status as ProjectStatus},include,orderBy:{updatedAt:'asc'}}),req.user!.id);}
+ @Get('moderation/projects') @UseGuards(AuthGuard)
+ queue(@Req() req:AuthRequest,@Query() query:Record<string,unknown>) {
+  ensureReviewer(req.user!);
+  const pagination=parseProjectCollectionQuery(query,'moderation');
+  return this.projectPage({status:pagination.status},[{updatedAt:'asc'},{id:'asc'}],pagination,req.user!.id);
+ }
  @Patch('moderation/projects/:id') @UseGuards(AuthGuard)
  async moderate(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ModerationDto) {
   ensureReviewer(req.user!);

@@ -9,7 +9,10 @@ Optional request fields may be omitted but cannot be `null`. Human-readable text
 - PATCH /profile {name?,department?,semester?,bio?} -> user.
 - GET /projects?q=&department=&semester=&type=&tech=&page=1&limit=12&sort=recent|popular -> {items,total,page,limit,pages}. Approved only.
   Query values must be single strings (repeated/structured values and unsupported parameter names return 400). Page is an integer 1–10000; limit is 1–48; semester is 1–12. Out-of-range or malformed numbers and unknown sort values return 400. Search is at most 200 characters, department 80, type 60, technology 40. Empty text filters are ignored. Recent/popular sorts have deterministic timestamp/ID tie-breakers.
-- GET /projects/:id -> project; POST /projects/:id/view -> {views}; GET /my/projects -> project[]; GET /my/bookmarks -> project[].
+- GET /projects/:id -> project; POST /projects/:id/view -> {views}.
+- GET /my/projects?page=1&limit=24&status= -> project page plus `summary:{total,published,pending,byStatus:{DRAFT,PENDING,APPROVED,CHANGES_REQUESTED,HIDDEN}}`. Optional status filters the returned page and its total; every summary count still includes all of the signed-in owner's projects. Order: updatedAt descending, then id descending.
+- GET /my/bookmarks?page=1&limit=24 -> project page containing only the signed-in user's APPROVED bookmarks. Order: createdAt descending, then id descending.
+  Private project pages use `{items,total,page,limit,pages}`, with page 1–10000 and limit 1–48 (default 24). Unknown, repeated, bracketed, or malformed parameters return 400. Empty out-of-range pages preserve the requested page number and actual totals/pages. After removing a row, clients should reload the same page and step back only if it no longer exists. Offset pages are live views, not immutable traversal snapshots. Items, counts, summary, and viewer flags within each response share a database snapshot.
 - POST /projects {title,description,department,semester,type,techStack:string[],teamMembers:string[],githubUrl?,demoUrl?,screenshots?:string[]} -> project with version 0 and DRAFT status. Create does not accept expectedVersion.
 - PATCH /projects/:id requires the same project fields plus `expectedVersion` -> updated project. Editing approved/pending work resets it to draft.
 - DELETE /projects/:id requires a JSON body `{expectedVersion}` -> {ok:true}.
@@ -19,7 +22,7 @@ Optional request fields may be omitted but cannot be `null`. Human-readable text
 - POST /uploads multipart field `file` -> {url}; PNG/JPEG/WebP up to 5 MB, authenticated. Use returned URL in screenshots.
   Exactly one file part and no extra form fields are accepted. At most two uploads are parsed/processed concurrently per API process; excess requests return 503 and `Retry-After: 1`. Files are removed if recording ownership fails. Missing stored image files return 404.
 - PUT /projects/:id/like and DELETE /projects/:id/like; PUT /projects/:id/bookmark and DELETE /projects/:id/bookmark -> {liked,bookmarked,likes}.
-- GET /moderation/projects?status=PENDING -> project[] (faculty/admin); PATCH /moderation/projects/:id {status:APPROVED|CHANGES_REQUESTED|HIDDEN,feedback?:string,expectedVersion:number}.
+- GET /moderation/projects?status=PENDING&page=1&limit=24 -> project page (faculty/admin), ordered by updatedAt ascending then id ascending. PATCH /moderation/projects/:id {status:APPROVED|CHANGES_REQUESTED|HIDDEN,feedback?:string,expectedVersion:number}.
   Unsubmitted drafts cannot be moderated. Approval requires PENDING; requesting changes requires nonblank feedback and may reopen hidden or published work. Successful moderation and its audit entry commit atomically.
 - GET /admin/users -> user[]; PATCH /admin/users/:id/role {role:STUDENT|FACULTY|ADMIN}; GET /admin/audit -> audit[]. Admin only.
   Role changes serialize through a database transaction lock and recheck the acting administrator's current role after acquiring it. A request admitted before its actor was demoted still returns 403. Self-role changes return 400; missing targets return 404; a last-administrator demotion guard returns 409. Role updates and audit records commit or roll back together.
