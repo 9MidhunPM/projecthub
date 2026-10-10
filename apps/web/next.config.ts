@@ -1,5 +1,8 @@
 import type { NextConfig } from 'next';
+import { join } from 'node:path';
 const nextConfig: NextConfig = {
+  output: 'standalone',
+  outputFileTracingRoot: join(__dirname, '../..'),
   poweredByHeader: false,
   experimental: { cpus: 2 },
   async headers() {

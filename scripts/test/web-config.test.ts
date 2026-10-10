@@ -14,6 +14,7 @@ test('frontend HTML and static responses receive baseline browser security heade
   assert.equal(headers['strict-transport-security'], undefined, 'HSTS belongs to the reviewed HTTPS ingress policy');
   assert.equal(headers['content-security-policy'], undefined, 'Next inline scripts need a separately tested CSP strategy');
   assert.equal(config.poweredByHeader, false);
+  assert.equal(config.output, 'standalone');
 });
 
 test('API and upload proxies retain the configured internal service destination', async () => {

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mkdtemp, rm } = require('node:fs/promises');
+const { mkdtemp, rm, cp, mkdir, access } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { resolve, join } = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -67,6 +67,7 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
   while (webPort === apiPort) webPort = await unusedPort();
   const base = `http://127.0.0.1:${webPort}`;
   const uploads = await mkdtemp(join(tmpdir(), 'projecthub-http-uploads-'));
+  const runtime = await mkdtemp(join(tmpdir(), 'projecthub-web-runtime-'));
   const nonce = randomUUID().slice(0, 8);
   const env = { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl, NODE_ENV: 'test', WEB_ORIGIN: base, COOKIE_SECURE: 'false', UPLOAD_DIR: uploads, API_INTERNAL_URL: `http://127.0.0.1:${apiPort}`, NEXT_TELEMETRY_DISABLED: '1' };
   const db = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
@@ -85,6 +86,7 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
     } finally {
       await db.$disconnect();
       await rm(uploads, { recursive: true, force: true });
+      await rm(runtime, { recursive: true, force: true });
     }
   })();
   const interrupted = () => { void cleanup().finally(() => process.exit(1)); };
@@ -100,9 +102,22 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
   assert(npm, 'Run this suite through npm run test:fullstack.');
   await run(process.execPath, [npm, 'run', 'build', '-w', '@projecthub/api'], { cwd: root, env });
   await run(process.execPath, [npm, 'run', 'build', '-w', '@projecthub/web'], { cwd: root, env: { ...env, NODE_ENV: 'production' }, timeoutMs: 180000 });
+  // Mirror Dockerfile.web exactly in a separate directory, outside the checkout.
+  // This prevents the smoke test from silently using untraced dev dependencies.
+  await cp(resolve(root, 'apps/web/.next/standalone'), runtime, { recursive: true, verbatimSymlinks: true });
+  await cp(resolve(root, 'apps/web/.next/static'), join(runtime, 'apps/web/.next/static'), { recursive: true, verbatimSymlinks: true });
+  await cp(resolve(root, 'apps/web/public'), join(runtime, 'apps/web/public'), { recursive: true, verbatimSymlinks: true });
+  await mkdir(join(runtime, 'docker'), { recursive: true });
+  await cp(resolve(root, 'docker/check-health.cjs'), join(runtime, 'docker/check-health.cjs'));
+  await access(join(runtime, 'apps/web/server.js'));
+  await assert.rejects(access(join(runtime, 'apps/api/src')));
+  await assert.rejects(access(join(runtime, 'node_modules/jsdom')));
+  await assert.rejects(access(join(runtime, 'node_modules/@testing-library')));
   api = startProcess(process.execPath, ['apps/api/dist/main.js'], { cwd: root, env: { ...env, PORT: String(apiPort) } });
   await waitForHttp(`${env.API_INTERNAL_URL}/api/health/ready`, api);
-  web = startProcess(process.execPath, [resolve(root, 'node_modules/next/dist/bin/next'), 'start', '--hostname', '127.0.0.1', '--port', String(webPort)], { cwd: resolve(root, 'apps/web'), env: { ...env, NODE_ENV: 'production' } });
+  const runtimeEnv = { ...env, NODE_ENV: 'production', PORT: String(webPort), HOSTNAME: '127.0.0.1' };
+  delete runtimeEnv.NODE_PATH;
+  web = startProcess(process.execPath, ['apps/web/server.js'], { cwd: runtime, env: runtimeEnv });
   await waitForHttp(`${base}/api/health/ready`, web);
 
   const anonymous = createClient(base);
@@ -128,6 +143,7 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
   }
 
   await t.test('HTML routes and static assets load with frontend security headers', async () => {
+    const nextAssets = new Set();
     for (const route of ['/', '/login', '/signup', '/workspace', '/profile', '/moderation', '/admin', '/bookmarks', '/projects/new']) {
       const response = await anonymous.request(route);
       assert.equal(response.status, 200, route);
@@ -138,6 +154,16 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
       assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
       assert.equal(response.headers.get('x-powered-by'), null);
       assert.doesNotMatch(response.data, /Internal Server Error|Build Error|Module not found/);
+      for (const match of response.data.matchAll(/(?:src|href)="([^"?]+\.(?:js|css))(?:\?[^\"]*)?"/g)) {
+        if (match[1].startsWith('/_next/static/')) nextAssets.add(match[1]);
+      }
+    }
+    assert(nextAssets.size > 0, 'Built HTML must reference JavaScript and stylesheet assets.');
+    for (const asset of nextAssets) {
+      const response = await anonymous.request(asset, { raw: true });
+      assert.equal(response.status, 200, asset);
+      assert(response.data.length > 0);
+      assert.match(response.headers.get('cache-control'), /immutable/);
     }
     for (const asset of ['campus-connect', 'ecotrack', 'study-space']) {
       const response = await anonymous.request(`/examples/${asset}.png`, { raw: true });
