@@ -4,7 +4,7 @@ import Link from 'next/link';
 import {usePathname, useRouter} from 'next/navigation';
 import {createContext, useCallback, useContext, useEffect, useRef, useState} from 'react';
 import {Box, Plus, Menu, X, LogOut} from 'lucide-react';
-import {api, ApiError, User, initials} from '@/lib/api';
+import {api, ApiError, User, initials, isAbortError} from '@/lib/api';
 
 type Context = {
   user: User | null;
@@ -25,28 +25,49 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const logoutPending = useRef(false);
+  const mounted = useRef(true);
+  const sessionGeneration = useRef(0);
+  const sessionRequest = useRef<AbortController | null>(null);
+  const logoutRequest = useRef<AbortController | null>(null);
   const header = useRef<HTMLElement>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
   const path = usePathname();
   const router = useRouter();
 
   const refresh = useCallback(async () => {
+    if (!mounted.current || logoutPending.current) return;
+    sessionRequest.current?.abort();
+    const controller = new AbortController();
+    const generation = ++sessionGeneration.current;
+    sessionRequest.current = controller;
+    const current = () => mounted.current && sessionGeneration.current === generation && !controller.signal.aborted;
     setLoading(true);
     setSessionError('');
     try {
-      setUser(await api<User>('/auth/me'));
+      const nextUser = await api<User>('/auth/me', {signal: controller.signal});
+      if (current()) setUser(nextUser);
     } catch (failure) {
+      if (!current() || isAbortError(failure)) return;
       if (failure instanceof ApiError && failure.status === 401) {
         setUser(null);
       } else {
         setSessionError((failure as Error).message);
       }
     } finally {
-      setLoading(false);
+      if (current()) { sessionRequest.current = null; setLoading(false); }
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    mounted.current = true;
+    void refresh();
+    return () => {
+      mounted.current = false;
+      sessionGeneration.current += 1;
+      sessionRequest.current?.abort();
+      logoutRequest.current?.abort();
+    };
+  }, [refresh]);
   useEffect(() => { setOpen(false); }, [path]);
   useEffect(() => {
     if (!open) return;
@@ -72,19 +93,28 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   async function logout() {
     if (logoutPending.current) return;
     logoutPending.current = true;
+    // A response issued before logout must never resurrect the old session.
+    sessionGeneration.current += 1;
+    sessionRequest.current?.abort();
+    sessionRequest.current = null;
+    const controller = new AbortController();
+    logoutRequest.current = controller;
+    setLoading(false);
     setSigningOut(true);
     try {
-      await api('/auth/logout', {method: 'POST'});
+      await api('/auth/logout', {method: 'POST', signal: controller.signal});
+      if (!mounted.current || controller.signal.aborted) return;
       setUser(null);
       setSessionError('');
       setOpen(false);
       setToast('You have signed out.');
       router.push('/');
     } catch (failure) {
-      setToast((failure as Error).message);
+      if (mounted.current && !controller.signal.aborted && !isAbortError(failure)) setToast((failure as Error).message);
     } finally {
       logoutPending.current = false;
-      setSigningOut(false);
+      logoutRequest.current = null;
+      if (mounted.current) setSigningOut(false);
     }
   }
 
