@@ -1,6 +1,7 @@
 'use strict';
 const { spawn } = require('node:child_process');
 const net = require('node:net');
+const { setTimeout: delay } = require('node:timers/promises');
 
 async function unusedPort() {
   const server = net.createServer();
@@ -29,35 +30,49 @@ function startProcess(command, args, options = {}) {
 }
 
 function sendSignal(child, signal) {
-  if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+  if (!child.pid) return;
   try {
-    if (process.platform === 'win32') child.kill(signal);
+    if (process.platform === 'win32') {
+      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+    }
     else process.kill(-child.pid, signal);
   } catch (error) { if (error.code !== 'ESRCH') throw error; }
 }
 
+function processGroupAlive(child) {
+  if (!child.pid) return false;
+  if (process.platform === 'win32') return child.exitCode === null && child.signalCode === null;
+  try { process.kill(-child.pid, 0); return true; }
+  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+}
+
 async function stopProcess(handle, graceMs = 5000) {
   if (!handle) return;
-  sendSignal(handle.child, 'SIGTERM');
-  let timer;
-  try {
-    await Promise.race([
-      handle.completion.catch(() => {}),
-      new Promise(resolve => { timer = setTimeout(() => { sendSignal(handle.child, 'SIGKILL'); resolve(); }, graceMs); }),
-    ]);
+  if (handle.stopping) return handle.stopping;
+  handle.stopping = (async () => {
+    sendSignal(handle.child, 'SIGTERM');
+    const deadline = Date.now() + graceMs;
+    // The npm/shell leader can exit first while a descendant ignores SIGTERM.
+    // Keep watching the owned process group rather than only the leader's exit.
+    while (processGroupAlive(handle.child) && Date.now() < deadline) {
+      await delay(Math.min(25, Math.max(1, deadline - Date.now())));
+    }
+    if (processGroupAlive(handle.child)) sendSignal(handle.child, 'SIGKILL');
     await handle.completion.catch(() => {});
-  } finally { clearTimeout(timer); }
+  })();
+  return handle.stopping;
 }
 
 async function run(command, args, { timeoutMs = 120000, signal, ...options } = {}) {
   if (signal?.aborted) throw new Error('Command interrupted.');
   const handle = startProcess(command, args, options);
   let timedOut = false;
+  let result;
   const cancel = () => { void stopProcess(handle); };
   signal?.addEventListener('abort', cancel, { once: true });
   const timer = setTimeout(() => { timedOut = true; cancel(); }, timeoutMs);
   try {
-    const result = await handle.completion;
+    result = await handle.completion;
     if (timedOut) throw new Error('Command timed out.');
     if (signal?.aborted) throw new Error('Command interrupted.');
     if (result.code !== 0) throw new Error(`Command failed (${result.signal || result.code}).`);
@@ -65,7 +80,9 @@ async function run(command, args, { timeoutMs = 120000, signal, ...options } = {
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
-    await stopProcess(handle);
+    // Successful one-shot commands may intentionally daemonize (pg_ctl start).
+    // Explicit cancellation and failures still own cleanup of all descendants.
+    if (result?.code !== 0 || timedOut || signal?.aborted) await stopProcess(handle);
   }
 }
 
