@@ -31,6 +31,10 @@ test('migrations preserve populated baseline projects and initialize concurrency
       assert.deepEqual(project, { title: 'Existing title', status: 'APPROVED', views: 12, version: 0, ownerId: 'owner', techStack: ['TypeScript'] });
       assert.equal(await tx.$executeRaw`UPDATE "Project" SET version=version+1 WHERE id='project' AND version=0`, 1);
       assert.equal(await tx.$executeRaw`UPDATE "Project" SET title='Lost update' WHERE id='project' AND version=0`, 0);
+      const indexes = await tx.$queryRaw<{ indexname: string; indexdef: string }[]>`SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=${schema}`;
+      const names = new Set(indexes.map(index => index.indexname));
+      for (const name of ['Session_userId_expiresAt_idx', 'Project_ownerId_updatedAt_idx', 'Project_status_updatedAt_idx', 'Like_projectId_idx', 'Bookmark_projectId_idx', 'Audit_createdAt_idx']) assert(names.has(name), name);
+      for (const name of ['Project_techStack_idx', 'Project_screenshots_idx']) assert.match(indexes.find(index => index.indexname === name)!.indexdef, /USING gin/);
       throw rollback;
     }, { timeout: 15000 }), error => error === rollback);
   } finally {
