@@ -16,7 +16,7 @@ import { ensureExpectedVersion, ensureModerationTransition, guardProjectWrite } 
 import { persistUpload, UploadCapacityInterceptor } from './uploads';
 import { createSession, SESSION_LIFETIME_MS } from './sessions';
 import { changeUserRole } from './roles';
-import { parseProjectCollectionQuery } from './collection-query';
+import { parseAuditCollectionQuery, parseProjectCollectionQuery, parseUserCollectionQuery } from './collection-query';
 import { pageResult } from './query-params';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
@@ -194,11 +194,33 @@ export class ApiController {
   return this.shape(project,req.user!.id);
  }
  private admin(req:AuthRequest){if(req.user!.role!=='ADMIN')throw new ForbiddenException('Administrator access required');}
- @Get('admin/users') @UseGuards(AuthGuard) users(@Req() req:AuthRequest){this.admin(req);return this.db.user.findMany({select:userSelect,orderBy:{createdAt:'desc'},take:500});}
+ @Get('admin/users') @UseGuards(AuthGuard)
+ users(@Req() req:AuthRequest,@Query() query:Record<string,unknown>) {
+  this.admin(req);
+  const pagination=parseUserCollectionQuery(query);
+  return this.db.$transaction(async tx=>{
+   const [items,total]=await Promise.all([
+    tx.user.findMany({where:pagination.where,select:userSelect,orderBy:[{createdAt:'desc'},{id:'desc'}],skip:pagination.skip,take:pagination.limit}),
+    tx.user.count({where:pagination.where}),
+   ]);
+   return pageResult(items,total,pagination);
+  },{isolationLevel:Prisma.TransactionIsolationLevel.RepeatableRead});
+ }
  @Patch('admin/users/:id/role') @UseGuards(AuthGuard)
  role(@Param('id') id:string,@Body() body:RoleDto,@Req() req:AuthRequest) {
   this.admin(req);
   return changeUserRole(this.db,req.user!.id,id,body.role);
  }
- @Get('admin/audit') @UseGuards(AuthGuard) audits(@Req() req:AuthRequest){this.admin(req);return this.db.audit.findMany({orderBy:{createdAt:'desc'},take:200});}
+ @Get('admin/audit') @UseGuards(AuthGuard)
+ audits(@Req() req:AuthRequest,@Query() query:Record<string,unknown>) {
+  this.admin(req);
+  const pagination=parseAuditCollectionQuery(query);
+  return this.db.$transaction(async tx=>{
+   const [items,total]=await Promise.all([
+    tx.audit.findMany({orderBy:[{createdAt:'desc'},{id:'desc'}],skip:pagination.skip,take:pagination.limit}),
+    tx.audit.count(),
+   ]);
+   return pageResult(items,total,pagination);
+  },{isolationLevel:Prisma.TransactionIsolationLevel.RepeatableRead});
+ }
 }
