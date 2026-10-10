@@ -58,8 +58,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 15
-    env:
-      TEST_DATABASE_URL: postgresql://projecthub_test:ci-only-local-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/projecthub_test?schema=public
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,6 +66,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Configure the isolated CI database URL
+        run: echo "TEST_DATABASE_URL=postgresql://projecthub_test:ci-only-local-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/projecthub_test?schema=public" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run db:generate
       - name: Migrate the isolated CI database
