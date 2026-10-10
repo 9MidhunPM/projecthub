@@ -1,9 +1,88 @@
 'use client';
-import {useEffect,useState} from 'react';
+
+import {useEffect, useRef, useState} from 'react';
 import Link from 'next/link';
-import {Check,MessageSquare,EyeOff,ArrowUpRight,ShieldCheck} from 'lucide-react';
-import {api,Project} from '@/lib/api';
-import {Guard,Loading,ErrorMessage,useApp} from './shell';
+import {Check, MessageSquare, EyeOff, ArrowUpRight, ShieldCheck} from 'lucide-react';
+import {api, ApiError, isAbortError, Project, ProjectStatus} from '@/lib/api';
+import {useApiResource} from '@/lib/use-api-resource';
+import {Guard, Loading, ErrorMessage, useApp} from './shell';
 import {Status} from './workspace';
-export function Moderation(){return <Guard roles={['FACULTY','ADMIN']}><ReviewQueue/></Guard>}
-function ReviewQueue(){const [status,setStatus]=useState('PENDING');const [projects,setProjects]=useState<Project[]|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState('');const [feedback,setFeedback]=useState<Record<string,string>>({});const {notify}=useApp();useEffect(()=>{setError('');setProjects(null);api<Project[]>(`/moderation/projects?status=${status}`).then(setProjects).catch(e=>setError(e.message))},[status]);async function review(p:Project,next:string){const text=feedback[p.id]?.trim();if(next==='CHANGES_REQUESTED'&&!text){setError('Add a clear note for the student before requesting changes.');return}setBusy(p.id);setError('');try{await api(`/moderation/projects/${p.id}`,{method:'PATCH',body:JSON.stringify({status:next,feedback:text||''})});setProjects(prev=>prev!.filter(x=>x.id!==p.id));notify(next==='APPROVED'?'Project approved and published.':next==='HIDDEN'?'Project hidden from Explore.':'Changes requested.')}catch(e){setError((e as Error).message)}finally{setBusy('')}}return <div className="page-container"><div className="page-title"><div><h1>Give good work a green light.</h1><p>Review student projects and help their ideas shine.</p></div><ShieldCheck size={32}/></div><div className="tab-bar review-tabs">{[['PENDING','Awaiting review'],['APPROVED','Published'],['CHANGES_REQUESTED','Changes requested'],['HIDDEN','Hidden']].map(([value,label])=><button key={value} className={status===value?'active':''} onClick={()=>setStatus(value)}>{label}</button>)}</div><ErrorMessage message={error}/>{!projects&&!error?<Loading/>:projects?.length?<div className="review-list">{projects.map(p=><article className="review-card" key={p.id}><div className="review-card-heading"><div><Status value={p.status}/><h2><Link href={`/projects/${p.id}`}>{p.title}</Link></h2><p>{p.owner.name} · {p.department} · Semester {p.semester}</p></div><Link className="button" href={`/projects/${p.id}`}>View project<ArrowUpRight size={16}/></Link></div><p className="review-description">{p.description}</p><div className="tags">{p.techStack.map(t=><span key={t}>{t}</span>)}</div>{p.feedback&&<div className="review-note">Previous feedback: {p.feedback}</div>}<label>Feedback for the student<textarea maxLength={2000} rows={2} value={feedback[p.id]||''} onChange={e=>setFeedback({...feedback,[p.id]:e.target.value})} placeholder="Be specific about what is working or what needs to change."/></label><div className="review-actions">{p.status!=='HIDDEN'&&<button disabled={busy===p.id} className="button danger" onClick={()=>review(p,'HIDDEN')}><EyeOff size={16}/>Hide project</button>}<div><button disabled={busy===p.id} className="button" onClick={()=>review(p,'CHANGES_REQUESTED')}><MessageSquare size={16}/>Request changes</button><button disabled={busy===p.id||p.status!=='PENDING'} className="button primary" onClick={()=>review(p,'APPROVED')}><Check size={17}/>Approve project</button></div></div></article>)}</div>:!error&&<div className="empty"><ShieldCheck size={40}/><h2>You’re all caught up.</h2><p>No projects in this queue right now.</p></div>}</div>}
+
+type ReviewStatus = Extract<ProjectStatus, 'PENDING' | 'APPROVED' | 'CHANGES_REQUESTED' | 'HIDDEN'>;
+type Decision = Exclude<ReviewStatus, 'PENDING'>;
+const queues: {value: ReviewStatus; label: string; empty: string}[] = [
+  {value: 'PENDING', label: 'Awaiting review', empty: 'No projects are awaiting review.'},
+  {value: 'APPROVED', label: 'Published', empty: 'No published projects in this queue.'},
+  {value: 'CHANGES_REQUESTED', label: 'Changes requested', empty: 'No projects are waiting for changes.'},
+  {value: 'HIDDEN', label: 'Hidden', empty: 'No hidden projects in this queue.'},
+];
+
+export function Moderation() { return <Guard roles={['FACULTY', 'ADMIN']}><ReviewQueue/></Guard>; }
+
+function ReviewQueue() {
+  const [status, setStatus] = useState<ReviewStatus>('PENDING');
+  const {data: projects, error, loading, reload, setData} = useApiResource<Project[]>(`/moderation/projects?status=${status}`);
+  const [busy, setBusy] = useState<{id: string; decision: Decision} | null>(null);
+  const [feedback, setFeedback] = useState<Record<string, string>>({});
+  const [itemErrors, setItemErrors] = useState<Record<string, {message: string; conflict: boolean}>>({});
+  const request = useRef<AbortController | null>(null);
+  const {notify, user} = useApp();
+
+  useEffect(() => () => { request.current?.abort(); }, []);
+
+  async function review(project: Project, decision: Decision) {
+    if (request.current || project.ownerId === user?.id) return;
+    const text = feedback[project.id]?.trim();
+    if (decision === 'CHANGES_REQUESTED' && !text) {
+      setItemErrors(previous => ({...previous, [project.id]: {message: 'Add a clear note before requesting changes.', conflict: false}}));
+      document.getElementById(`feedback-${project.id}`)?.focus();
+      return;
+    }
+    if (decision === 'APPROVED' && !window.confirm(`Approve “${project.title}”? Its description, team names, links, and screenshots will be publicly visible in Explore.`)) return;
+    if (decision === 'HIDDEN' && !window.confirm(`Hide “${project.title}”? It will not be listed in Explore. The student will still be able to see it in their workspace.`)) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setBusy({id: project.id, decision});
+    setItemErrors(previous => ({...previous, [project.id]: {message: '', conflict: false}}));
+    try {
+      await api(`/moderation/projects/${project.id}`, {method: 'PATCH', body: JSON.stringify({status: decision, feedback: text || ''}), signal: controller.signal});
+      if (controller.signal.aborted) return;
+      setData(previous => previous?.filter(item => item.id !== project.id) ?? null);
+      setFeedback(previous => { const next = {...previous}; delete next[project.id]; return next; });
+      notify(decision === 'APPROVED' ? 'Project approved and published.' : decision === 'HIDDEN' ? 'Project hidden from Explore.' : 'Changes requested.');
+    } catch (failure) {
+      if (!controller.signal.aborted && !isAbortError(failure)) {
+        setItemErrors(previous => ({...previous, [project.id]: {message: (failure as Error).message, conflict: failure instanceof ApiError && failure.status === 409}}));
+      }
+    } finally {
+      if (!controller.signal.aborted) { request.current = null; setBusy(null); }
+    }
+  }
+
+  return <div className="page-container">
+    <div className="page-title"><div><h1>Give good work a green light.</h1><p>Review student projects and help their ideas shine.</p></div><ShieldCheck size={32} aria-hidden="true"/></div>
+    <nav className="tab-bar review-tabs" aria-label="Review queues">{queues.map(queue => <button key={queue.value} className={status === queue.value ? 'active' : ''} aria-pressed={status === queue.value} disabled={Boolean(busy)} onClick={() => setStatus(queue.value)}>{queue.label}</button>)}</nav>
+    <ErrorMessage message={error}/>
+    {error && <button className="button" disabled={Boolean(busy)} onClick={reload}>Try again</button>}
+    {!projects && loading ? <Loading message="Loading review queue…"/> : projects?.length ? <>
+      <p className="collection-count" role="status">{projects.length} {projects.length === 1 ? 'project' : 'projects'} in this queue</p>
+      <div className="review-list" aria-busy={loading}>{projects.map(project => {
+        const ownsProject = project.ownerId === user?.id;
+        const itemError = itemErrors[project.id];
+        return <article className="review-card" key={project.id} aria-labelledby={`review-title-${project.id}`}>
+          <div className="review-card-heading"><div><Status value={project.status}/><h2 id={`review-title-${project.id}`}><Link href={`/projects/${project.id}`}>{project.title}</Link></h2><p>{project.owner.name} · {project.department} · Semester {project.semester}</p></div><Link className="button" href={`/projects/${project.id}`}>View project<ArrowUpRight size={16} aria-hidden="true"/></Link></div>
+          <p className="review-description">{project.description}</p>
+          <div className="tags">{project.techStack.map((technology, index) => <span key={`${technology}-${index}`}>{technology}</span>)}</div>
+          {project.feedback && <div className="review-note">Previous feedback: {project.feedback}</div>}
+          {ownsProject ? <div className="review-note">Another faculty member or administrator must review your own project.</div> : <>
+            <label htmlFor={`feedback-${project.id}`}>Feedback for the student</label><textarea id={`feedback-${project.id}`} maxLength={2000} rows={2} disabled={Boolean(busy)} aria-describedby={`feedback-hint-${project.id}`} aria-invalid={Boolean(itemError?.message)} value={feedback[project.id] || ''} onChange={event => setFeedback(previous => ({...previous, [project.id]: event.target.value}))} placeholder="Be specific about what is working or what needs to change."/>
+            <p id={`feedback-hint-${project.id}`} className="review-feedback-hint">Required when requesting changes. Up to 2,000 characters.</p>
+            <ErrorMessage message={itemError?.message || ''}/>
+            {itemError?.conflict && <button className="button" disabled={Boolean(busy)} onClick={() => { setItemErrors(previous => ({...previous, [project.id]: {message: '', conflict: false}})); reload(); }}>Refresh this queue</button>}
+            <div className="review-actions">{project.status !== 'HIDDEN' && <button disabled={Boolean(busy)} className="button danger" onClick={() => void review(project, 'HIDDEN')}><EyeOff size={16} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'HIDDEN' ? 'Hiding…' : 'Hide project'}</button>}<div><button disabled={Boolean(busy)} className="button" onClick={() => void review(project, 'CHANGES_REQUESTED')}><MessageSquare size={16} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'CHANGES_REQUESTED' ? 'Requesting…' : 'Request changes'}</button><button disabled={Boolean(busy) || project.status !== 'PENDING'} className="button primary" onClick={() => void review(project, 'APPROVED')}><Check size={17} aria-hidden="true"/>{busy?.id === project.id && busy.decision === 'APPROVED' ? 'Approving…' : 'Approve project'}</button></div></div>
+          </>}
+        </article>;
+      })}</div>
+    </> : !error && !loading && <div className="empty"><ShieldCheck size={40} aria-hidden="true"/><h2>{queues.find(queue => queue.value === status)?.empty}</h2><p>{status === 'PENDING' ? 'New student submissions will appear here.' : 'Choose another queue to continue reviewing.'}</p></div>}
+  </div>;
+}
