@@ -92,26 +92,57 @@ for (const detail of [false, true]) {
   test(`${name} keeps a newer request busy when an older viewer response finishes`, async () => {
     const first = deferred<Response>();
     const second = deferred<Response>();
-    let reads = 0;
-    let mutations = 0;
-    globalThis.fetch = async url => {
-      if (String(url).endsWith('/auth/me')) return Response.json(++reads === 1 ? student : {...student, id: 'student-2', name: 'Second student'});
-      if (String(url).endsWith('/like')) return ++mutations === 1 ? first.promise : second.promise;
+    const nextSession = deferred<Response>();
+    const nextProject = deferred<Response>();
+    const mutations: {url: string; method: string | undefined; signal: AbortSignal | null | undefined}[] = [];
+    let sessionReads = 0;
+    let projectReads = 0;
+    globalThis.fetch = async (url, options) => {
+      if (String(url).endsWith('/auth/me')) return ++sessionReads === 1 ? Response.json(student) : nextSession.promise;
+      if (String(url).endsWith('/like')) {
+        mutations.push({url: String(url), method: options?.method, signal: options?.signal});
+        return mutations.length === 1 ? first.promise : second.promise;
+      }
       if (String(url).endsWith('/view')) return Response.json({views: 2});
-      return Response.json(project);
+      projectReads += 1;
+      return projectReads === 1 ? Response.json(project) : nextProject.promise;
     };
     const view = renderApp(<Subject detail={detail}/>);
     await waitFor(() => assert.ok(!view.getByRole('button', {name: `Like ${project.title}, 0 likes`}).hasAttribute('disabled')));
     fireEvent.click(view.getByRole('button', {name: `Like ${project.title}, 0 likes`}));
+    assert.equal(mutations.length, 1);
+    assert.equal(mutations[0].method, 'PUT');
+
     fireEvent.click(view.getByRole('button', {name: 'Switch session'}));
-    await waitFor(() => assert.ok(view.getByRole('link', {name: 'Your profile, Second student'})));
-    await waitFor(() => assert.ok(!view.getByRole('button', {name: `Like ${project.title}, 0 likes`}).hasAttribute('disabled')));
-    fireEvent.click(view.getByRole('button', {name: `Like ${project.title}, 0 likes`}));
+    await waitFor(() => assert.equal(sessionReads, 2));
+    assert.equal(mutations[0].signal?.aborted, true);
+    assert.equal(mutations.length, 1, 'the replacement viewer has not finished loading');
+    await act(async () => nextSession.resolve(Response.json({...student, id: 'student-2', name: 'Second student'})));
+    if (detail) {
+      await waitFor(() => assert.equal(projectReads, 2));
+      assert.ok(view.getByText('Loading project…'));
+      assert.equal(mutations.length, 1, 'the replacement project snapshot is still pending');
+      await act(async () => nextProject.resolve(Response.json({...project, title: 'Second viewer snapshot'})));
+    }
+    // Header identity alone is not proof that Detail's viewer-specific read has
+    // completed. A distinct response title identifies the settled new snapshot.
+    const title = detail ? 'Second viewer snapshot' : project.title;
+    const action = view.getByRole('button', {name: `Like ${title}, 0 likes`});
+    assert.equal(action.hasAttribute('disabled'), false);
+    fireEvent.click(action);
+    assert.equal(mutations.length, 2, 'the newer request must actually be in flight');
+    assert.equal(mutations[1].method, 'PUT');
+    assert.equal(mutations[1].signal?.aborted, false);
+
     await act(async () => first.resolve(Response.json({message: 'Old request failed'}, {status: 503})));
-    assert.ok(view.getByRole('button', {name: `Like ${project.title}, 0 likes`}).hasAttribute('disabled'));
+    assert.ok(view.getByRole('button', {name: `Like ${title}, 0 likes`}).hasAttribute('disabled'));
+    assert.equal(mutations[1].signal?.aborted, false, 'old completion cannot cancel the newer request');
     assert.ok(view.queryByText('Old request failed') === null);
+    fireEvent.click(action);
+    assert.equal(mutations.length, 2, 'old completion cannot unlock duplicate clicks');
     await act(async () => second.resolve(Response.json({likes: 1, liked: true, bookmarked: false})));
-    assert.equal(view.getByRole('button', {name: `Unlike ${project.title}, 1 likes`}).hasAttribute('disabled'), false);
+    assert.equal(view.getByRole('button', {name: `Unlike ${title}, 1 likes`}).hasAttribute('disabled'), false);
+    assert.equal(projectReads, detail ? 2 : 0);
   });
 
   test(`${name} blocks engagement while the viewer is being refreshed`, async () => {
