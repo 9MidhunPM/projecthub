@@ -2,7 +2,9 @@
 // CI-only exercise of the unchanged Dokploy recipe. No Dokploy API or domain use.
 const assert = require('node:assert/strict');
 const { randomBytes } = require('node:crypto');
-const { resolve } = require('node:path');
+const { resolve, join, isAbsolute } = require('node:path');
+const { mkdtemp, mkdir, rm } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
 const { startProcess, stopProcess } = require('./process-utils.cjs');
 const { recipeProbeSource } = require('./dokploy-probes.cjs');
 
@@ -26,12 +28,20 @@ function projectName(env) {
   return `projecthub-recipe-ci-${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}-${randomBytes(6).toString('hex')}`;
 }
 
-function dockerEnvironment(env) {
+async function createDockerHome() {
+  const directory = await mkdtemp(join(tmpdir(), 'projecthub-recipe-cli-'));
+  try {
+    for (const name of ['docker', 'buildx']) await mkdir(join(directory, name), { mode: 0o700 });
+    return directory;
+  } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
+}
+
+function dockerEnvironment(env, directory) {
+  assert(typeof directory === 'string' && isAbsolute(directory));
   // In particular, do not inherit COMPOSE_*, DOCKER_*, BUILDX_*, credentials,
-  // NODE_OPTIONS or command-line proxy configuration from the invoking shell.
-  const result = { PATH: env.PATH, HOME: env.HOME, LANG: 'C.UTF-8' };
-  if (env.TMPDIR) result.TMPDIR = env.TMPDIR;
-  return result;
+  // NODE_OPTIONS, proxy settings, or ~/.docker's persisted builder/auth config.
+  return { PATH: env.PATH, HOME: directory, TMPDIR: directory, LANG: 'C.UTF-8',
+    DOCKER_CONFIG: join(directory, 'docker'), BUILDX_CONFIG: join(directory, 'buildx'), BUILDX_BUILDER: 'default' };
 }
 
 function validateConfig(config, project) {
@@ -145,10 +155,11 @@ function safeDiagnostics(items) {
   }));
 }
 
-async function dockerCommand(args, { signal, timeoutMs = 60000, capture = false, expectExit = 0 } = {}) {
+async function dockerCommand(args, { signal, timeoutMs = 60000, capture = false, dockerHome } = {}) {
   if (signal?.aborted) throw new Error('Recipe command cancelled.');
-  const handle = startProcess('docker', ['--host', 'unix:///var/run/docker.sock', ...args], {
-    cwd: root, env: dockerEnvironment(process.env), stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'],
+  const env = dockerEnvironment(process.env, dockerHome);
+  const handle = startProcess('docker', ['--config', env.DOCKER_CONFIG, '--host', 'unix:///var/run/docker.sock', ...args], {
+    cwd: root, env, stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'],
   });
   let output = '';
   let overflow = false;
@@ -165,12 +176,12 @@ async function dockerCommand(args, { signal, timeoutMs = 60000, capture = false,
   try {
     result = await handle.completion;
     await closed;
-    if (signal?.aborted || timedOut || overflow || result.code !== expectExit) throw new Error('Recipe command failed.');
+    if (signal?.aborted || timedOut || overflow || result.code !== 0) throw new Error('Recipe command failed.');
     return output;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', stop);
-    if (signal?.aborted || timedOut || overflow || result?.code !== expectExit) await stopProcess(handle, 1000);
+    if (signal?.aborted || timedOut || overflow || result?.code !== 0) await stopProcess(handle, 1000);
   }
 }
 
@@ -236,7 +247,7 @@ async function exerciseRecipe(compose, project, run, inspect, onStage = () => {}
   validateRuntime(await inspect(), project, true);
   await probe('secrets-init', 'withhold', true);
   await probe('secrets-init', 'missing', true);
-  await run([...compose, 'run', '--rm', '--no-deps', '-T', 'secrets-init'], { expectExit: 1 });
+  await probe('secrets-init', 'refusal', true);
   await probe('secrets-init', 'missing', true);
   validateRuntime(await inspect(), project, true);
 }
@@ -250,14 +261,16 @@ async function cleanup(compose, project, command, inspect) {
 
 async function main() {
   const project = projectName(process.env);
+  const dockerHome = await createDockerHome();
   const compose = ['compose', '--project-name', project, '--env-file', '/dev/null', '-f', resolve(root, 'compose.dokploy.yaml')];
   const controller = new AbortController();
   const interrupted = () => controller.abort();
   process.on('SIGINT', interrupted);
   process.on('SIGTERM', interrupted);
   const deadline = setTimeout(interrupted, 15 * 60 * 1000);
-  const run = (args, options = {}) => dockerCommand(args, { signal: controller.signal, ...options });
-  const inspect = (kind, options = {}) => inventory(kind, project, dockerCommand, options);
+  const command = (args, options = {}) => dockerCommand(args, { ...options, dockerHome });
+  const run = (args, options = {}) => command(args, { signal: controller.signal, ...options });
+  const inspect = (kind, options = {}) => inventory(kind, project, command, options);
   let mayClean = false;
   try {
     validateConfig(JSON.parse(await run([...compose, 'config', '--format', 'json'], { capture: true })), project);
@@ -277,15 +290,18 @@ async function main() {
     clearTimeout(deadline);
     try {
       if (mayClean) {
-        await cleanup(compose, project, dockerCommand, inspect);
+        await cleanup(compose, project, command, inspect);
         console.log('Owned recipe containers, network, and disposable volumes removed.');
       }
     } finally {
-      process.removeListener('SIGINT', interrupted);
-      process.removeListener('SIGTERM', interrupted);
+      try { await rm(dockerHome, { recursive: true, force: true }); }
+      finally {
+        process.removeListener('SIGINT', interrupted);
+        process.removeListener('SIGTERM', interrupted);
+      }
     }
   }
 }
 
 if (require.main === module) main().catch(() => { console.error('Recipe verification or scoped cleanup failed.'); process.exitCode = 1; });
-module.exports = { projectName, dockerEnvironment, validateConfig, validateOwned, validateRuntime, safeDiagnostics, dockerCommand, inventory, exerciseRecipe, cleanup, containerFormat };
+module.exports = { projectName, createDockerHome, dockerEnvironment, validateConfig, validateOwned, validateRuntime, safeDiagnostics, dockerCommand, inventory, exerciseRecipe, cleanup, containerFormat };

@@ -26,7 +26,7 @@ async function verifyRecipeProbe(operation) {
     assert(stat.isFile() && stat.uid === 0 && (stat.mode & 0o777) === 0o600);
     assert.equal(digest(readSecret(path)), fs.readFileSync(fingerprint, 'utf8'));
   }
-  if (['capture', 'preserved', 'withhold', 'missing'].includes(operation)) {
+  if (['capture', 'preserved', 'withhold', 'missing', 'refusal'].includes(operation)) {
     assert.equal(process.getuid(), 0);
     const stat = fs.lstatSync(directory);
     assert(stat.isDirectory() && stat.uid === 0 && stat.gid === 1000 && (stat.mode & 0o777) === 0o750);
@@ -44,6 +44,19 @@ async function verifyRecipeProbe(operation) {
       assert(!fs.existsSync(file));
       assert.deepEqual(fs.readdirSync(directory).sort(), ['.ci-fingerprint', '.ci-withheld']);
       matchesCapture(withheld);
+      if (operation === 'refusal') {
+        // Run the real image entry script inside the fixture. Docker CLI failure
+        // alone cannot satisfy this check; no child output leaves the container.
+        const result = require('node:child_process').spawnSync(process.execPath, ['/app/init-db-secret.cjs'], {
+          stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', timeout: 10000, maxBuffer: 4096,
+        });
+        assert(!result.error && result.signal === null && result.status === 1);
+        assert.equal(result.stdout, '');
+        assert.equal(result.stderr, 'Database credential initialization failed. Check volume identity, ownership, and recovery requirements. No credential was printed.\n');
+        assert(!fs.existsSync(file));
+        assert.deepEqual(fs.readdirSync(directory).sort(), ['.ci-fingerprint', '.ci-withheld']);
+        matchesCapture(withheld);
+      }
     }
     return;
   }
@@ -84,7 +97,7 @@ async function verifyRecipeProbe(operation) {
 }
 
 function recipeProbeSource(operation) {
-  if (!['capture', 'preserved', 'withhold', 'missing', 'auth', 'http'].includes(operation)) throw new Error('Unknown recipe probe.');
+  if (!['capture', 'preserved', 'withhold', 'missing', 'refusal', 'auth', 'http'].includes(operation)) throw new Error('Unknown recipe probe.');
   // Silence dependency diagnostics before touching credentials. Only this fixed
   // token may leave the probe, on success. Never serialize an exception/value.
   return `const write = process.stdout.write.bind(process.stdout); process.stdout.write = process.stderr.write = () => true; (${verifyRecipeProbe.toString()})(${JSON.stringify(operation)}).then(() => write('PROJECTHUB_RECIPE_OK\\n'), () => { process.exitCode = 1; });`;

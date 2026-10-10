@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
+const { stat, readdir, rm } = require('node:fs/promises');
 const { resolve } = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { EventEmitter } = require('node:events');
@@ -58,8 +59,21 @@ test('recipe identity requires hosted CI and ordinary execution refuses before D
 });
 
 test('Docker environment cannot inherit remote endpoints, Compose overrides, builders or credentials', () => {
-  const result = smoke.dockerEnvironment({ PATH: '/bin', HOME: '/home/runner', TMPDIR: '/tmp', DOCKER_HOST: 'ssh://remote', DOCKER_CONTEXT: 'remote', DOCKER_CONFIG: '/private', DOCKER_TLS_VERIFY: '1', COMPOSE_FILE: 'other.yml', COMPOSE_PROFILES: 'live', BUILDX_BUILDER: 'remote', DATABASE_URL: 'private', NODE_OPTIONS: '--require=/private.js' });
-  assert.deepEqual(result, { PATH: '/bin', HOME: '/home/runner', TMPDIR: '/tmp', LANG: 'C.UTF-8' });
+  const result = smoke.dockerEnvironment({ PATH: '/bin', HOME: '/home/runner', TMPDIR: '/tmp', DOCKER_HOST: 'ssh://remote', DOCKER_CONTEXT: 'remote', DOCKER_CONFIG: '/private', DOCKER_TLS_VERIFY: '1', COMPOSE_FILE: 'other.yml', COMPOSE_PROFILES: 'live', BUILDX_BUILDER: 'remote', DATABASE_URL: 'private', NODE_OPTIONS: '--require=/private.js' }, '/tmp/fixture-cli');
+  assert.deepEqual(result, { PATH: '/bin', HOME: '/tmp/fixture-cli', TMPDIR: '/tmp/fixture-cli', LANG: 'C.UTF-8', DOCKER_CONFIG: '/tmp/fixture-cli/docker', BUILDX_CONFIG: '/tmp/fixture-cli/buildx', BUILDX_BUILDER: 'default' });
+  assert.throws(() => smoke.dockerEnvironment({ HOME: '/inherited' }));
+});
+
+test('client configuration starts private and empty without copying inherited Docker settings', async () => {
+  const directory = await smoke.createDockerHome();
+  try {
+    assert.equal((await stat(directory)).mode & 0o777, 0o700);
+    assert.deepEqual((await readdir(directory)).sort(), ['buildx', 'docker']);
+    for (const name of ['buildx', 'docker']) {
+      assert.equal((await stat(resolve(directory, name))).mode & 0o777, 0o700);
+      assert.deepEqual(await readdir(resolve(directory, name)), []);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('resolved recipe rejects publishing, external resources, unsafe builds and changed secret wiring', () => {
@@ -140,7 +154,7 @@ test('cleanup refuses foreign/missing ownership before down and verifies complet
   await assert.rejects(smoke.cleanup(['compose'], project, async () => { down = true; }, async kind => down && kind === 'container' ? [{ project, service: 'api' }] : []));
 });
 
-test('orchestration checks preservation before damage, stops all services, and requires exact refusal exit', async () => {
+test('orchestration stops services before damage and requires an executed refusal probe rather than CLI failure', async () => {
   const calls = []; const phases = []; let stopped = false;
   await smoke.exerciseRecipe(['compose'], project, async (args, options = {}) => {
     calls.push({ args, options });
@@ -152,9 +166,10 @@ test('orchestration checks preservation before damage, stops all services, and r
   const stop = calls.findIndex(call => call.args.includes('stop'));
   const withheld = calls.findIndex(call => call.args.some(arg => arg.includes('})("withhold")')));
   assert(withheld > stop);
-  const refusal = calls.filter(call => call.options.expectExit === 1);
+  const refusal = calls.filter(call => call.args.some(arg => arg.includes('})("refusal")')));
   assert.equal(refusal.length, 1);
-  assert.deepEqual(refusal[0].args, ['compose', 'run', '--rm', '--no-deps', '-T', 'secrets-init']);
+  assert.deepEqual(refusal[0].args.slice(0, -1), ['compose', 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'node', 'secrets-init', '-e']);
+  assert(!calls.some(call => call.options.expectExit));
   assert(calls.filter(call => call.args.includes('run')).every(call => call.args.includes('--no-deps') && call.args.includes('--rm')));
   assert(!calls.some(call => call.args.includes('--publish') || call.args.includes('--service-ports') || call.args.includes('push')));
   const migrateProbe = calls.find(call => call.args.includes('migrate') && call.args.includes('-e'));
@@ -183,18 +198,18 @@ function fakeCommand({ code = 0, output = '', pending = false } = {}) {
     async stopProcess(handle) { stopped++; handle.finish({ code: 143 }); },
   } : name === './dokploy-probes.cjs' ? require('../dokploy-probes.cjs') : require(name);
   runInNewContext(readFileSync(resolve(root, 'scripts/dokploy-smoke.cjs'), 'utf8'), context);
-  return { command: context.module.exports.dockerCommand, calls, stopped: () => stopped };
+  return { command: (args, options = {}) => context.module.exports.dockerCommand(args, { dockerHome: '/tmp/fixture-cli', ...options }), calls, stopped: () => stopped };
 }
 
 test('command transport pins the local socket, discards runtime streams, and never reports raw errors', async () => {
   const normal = fakeCommand(); await normal.command(['compose', 'up']);
-  assert.deepEqual(Array.from(normal.calls[0].args), ['--host', 'unix:///var/run/docker.sock', 'compose', 'up']);
+  assert.deepEqual(Array.from(normal.calls[0].args), ['--config', '/tmp/fixture-cli/docker', '--host', 'unix:///var/run/docker.sock', 'compose', 'up']);
   assert.deepEqual(Array.from(normal.calls[0].options.stdio), ['ignore', 'ignore', 'ignore']);
   assert.equal(normal.calls[0].options.env.DOCKER_HOST, undefined);
   const failure = fakeCommand({ code: 1, output: 'private-material' });
   await assert.rejects(failure.command(['exec'], { capture: true }), error => error.message === 'Recipe command failed.');
   assert(failure.stopped());
-  const expected = fakeCommand({ code: 1 }); await expected.command(['run'], { expectExit: 1 });
+  const refused = fakeCommand({ code: 1 }); await assert.rejects(refused.command(['run'], { expectExit: 1 }), error => error.message === 'Recipe command failed.');
   const overflow = fakeCommand({ output: 'x'.repeat(65537) }); await assert.rejects(overflow.command(['inspect'], { capture: true }));
   assert(overflow.stopped());
   const timed = fakeCommand({ pending: true }); await assert.rejects(timed.command(['run'], { timeoutMs: 10 })); assert(timed.stopped());

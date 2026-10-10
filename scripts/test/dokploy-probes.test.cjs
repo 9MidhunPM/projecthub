@@ -11,6 +11,7 @@ const withheld = directory + '/.ci-withheld';
 const pgVersion = '/var/lib/projecthub-db/PG_VERSION';
 // Deterministic non-authenticating unit fixture. No credential/service is created.
 const value = 'ab'.repeat(48);
+const refusalMessage = 'Database credential initialization failed. Check volume identity, ownership, and recovery requirements. No credential was printed.\n';
 function fixture() {
   const files = new Map([
     [directory, { type: 'directory', uid: 0, gid: 1000, mode: 0o750 }],
@@ -32,7 +33,7 @@ function fixture() {
     writeFileSync(path, content, options) { assert.equal(options.flag, 'wx'); assert(!files.has(path)); files.set(path, { type: 'file', uid: 0, gid: 0, mode: options.mode, content }); },
     renameSync(from, to) { assert(files.has(from)); assert(!files.has(to)); files.set(to, files.get(from)); files.delete(from); },
   };
-  const calls = [];
+  const calls = []; const initializerCalls = [];
   async function run(operation, options = {}) {
     const stdout = []; const stderr = []; const clients = [];
     const processFixture = {
@@ -40,6 +41,7 @@ function fixture() {
       getuid: () => options.uid ?? (['auth', 'http'].includes(operation) ? 1000 : 0),
       stdout: { write: text => stdout.push(text) }, stderr: { write: text => stderr.push(text) },
       exitCode: undefined,
+      execPath: '/usr/local/bin/node',
     };
     const context = {
       process: processFixture, URL, AbortSignal,
@@ -49,6 +51,15 @@ function fixture() {
       },
       require(name) {
         if (name === 'node:fs') return io;
+        if (name === 'node:child_process') return { spawnSync(executable, args, settings) {
+          assert.equal(executable, '/usr/local/bin/node');
+          assert.deepEqual(Array.from(args), ['/app/init-db-secret.cjs']);
+          assert.deepEqual(Array.from(settings.stdio), ['ignore', 'pipe', 'pipe']);
+          assert.equal(settings.timeout, 10000); assert.equal(settings.maxBuffer, 4096);
+          initializerCalls.push(args[0]);
+          if (options.regenerate) files.set(secret, { ...files.get(withheld) });
+          return { status: 1, signal: null, stdout: '', stderr: refusalMessage, ...options.initializerResult };
+        } };
         if (name === 'node:assert/strict') return Object.assign((...args) => assert(...args), assert, { deepEqual: (a, b) => assert.deepEqual(structuredClone(a), structuredClone(b)) });
         if (name === 'node:module') return { createRequire: anchor => {
           assert.equal(anchor, '/app/apps/api/package.json');
@@ -78,13 +89,13 @@ function fixture() {
     assert.deepEqual(stderr, []);
     return { stdout, code: processFixture.exitCode, clients };
   }
-  return { files, run, calls };
+  return { files, run, calls, initializerCalls };
 }
 const success = result => { assert.equal(result.code, undefined); assert.deepEqual(result.stdout, ['PROJECTHUB_RECIPE_OK\n']); };
 const failure = result => { assert.equal(result.code, 1); assert.deepEqual(result.stdout, []); };
 
 test('all exact serialized probes parse and emit only one fixed success token', () => {
-  for (const operation of ['capture', 'preserved', 'withhold', 'missing', 'auth', 'http']) assert.doesNotThrow(() => new Script(recipeProbeSource(operation)));
+  for (const operation of ['capture', 'preserved', 'withhold', 'missing', 'refusal', 'auth', 'http']) assert.doesNotThrow(() => new Script(recipeProbeSource(operation)));
   assert.throws(() => recipeProbeSource('unknown'));
 });
 
@@ -118,6 +129,17 @@ test('secret probes reject wrong owner, mode, format, symlinks and non-root muta
     f => { f.files.get(secret).type = 'symlink'; }, f => { f.files.get(directory).mode = 0o777; },
   ]) { const f = fixture(); change(f); failure(await f.run('capture')); assert(!f.files.has(fingerprint)); }
   const nonroot = fixture(); failure(await nonroot.run('capture', { uid: 1000 }));
+});
+
+test('refusal requires the actual initializer failure marker and cannot pass launch, timeout or replacement failures', async () => {
+  const f = fixture(); success(await f.run('capture')); success(await f.run('withhold'));
+  success(await f.run('refusal')); assert.deepEqual(f.initializerCalls, ['/app/init-db-secret.cjs']);
+  for (const initializerResult of [
+    { status: 0, stderr: '' }, { status: 1, stderr: 'Cannot find module' },
+    { status: 1, stdout: value }, { status: null, signal: 'SIGTERM' },
+    { error: new Error(value) },
+  ]) failure(await f.run('refusal', { initializerResult }));
+  failure(await f.run('refusal', { regenerate: true }));
 });
 
 test('authentication proves wrapper/file equality, migrated TCP access and specifically wrong-password rejection', async () => {
