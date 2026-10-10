@@ -54,9 +54,9 @@ There is no fallback to the ordinary `DATABASE_URL`. An absent/unsafe test URL i
 
 ## What the full-stack runner proves
 
-`npm run test:fullstack` builds both apps, copies the exact standalone/static/public layout from `Dockerfile.web` into a temporary directory outside the checkout, and starts its generated `apps/web/server.js`. The runtime cannot silently load project development dependencies from the source checkout. The suite verifies HTML pages, referenced JavaScript/CSS and example assets, frontend security headers, API/database readiness, session cookies, authorization, real image normalization/privacy, moderation, filters, idempotent interactions, administrative audit records, hiding, and logout revocation.
+`npm run test:fullstack` builds both apps, copies the exact standalone/static/public layout from `Dockerfile.web` into a temporary directory outside the checkout, and starts its generated `apps/web/server.js`. The runtime cannot silently load project development dependencies from the source checkout. The suite verifies HTML pages, referenced JavaScript/CSS and example assets, frontend security headers, API/database readiness, session cookies, authorization, real image normalization/privacy, versioned mutations and stale-write rejection, moderation, filters, paginated collection traversal and administrator search reachability, idempotent interactions, administrative audit records, hiding, and logout revocation.
 
-The API is compiled and uses a real PostgreSQL database. The frontend server uses a production build; test requests are HTTP clients, not rendered browser interactions. Do not run concurrent builds in the same checkout because they share `.next` and API output directories.
+The API is compiled and uses a real PostgreSQL database. Both synthetic HTTP harnesses (full-stack and recovery) explicitly bind the API to loopback and verify its actual listening address. The frontend server uses a production build; test requests are HTTP clients, not rendered browser interactions. Do not run concurrent builds in the same checkout because they share `.next` and API output directories.
 
 ## Security and CI
 
@@ -64,7 +64,7 @@ The API is compiled and uses a real PostgreSQL database. The frontend server use
 
 `.github/workflows/verify.yml` defines Node 22/24 type/unit/build checks, a PostgreSQL 17 service with migration/integration/full-stack checks, and Compose configuration/runtime checks. Action versions are pinned to verified immutable commit SHAs, checkout credentials are not persisted, and jobs have read-only repository permissions. No deployment or production secrets are involved. Checked-in workflow configuration is not evidence that a hosted CI run has passed.
 
-Before release, use [manual QA](MANUAL-QA.md) in supported real desktop/mobile browsers and complete actual Docker/Compose, HTTPS, backup/restore, and operational checks. The latest recorded evidence and limitations are in [VALIDATION.md](VALIDATION.md).
+Before release, rerun the gates against the intended revision, use [manual QA](MANUAL-QA.md) in supported real desktop/mobile browsers, and complete deployment-specific HTTPS, backup/restore, and operational checks. Ordinary Compose runtime evidence does not validate the Dokploy-specific recipe. The dated [verified application checkpoint](VALIDATION.md#verified-application-checkpoint-2026-10-10) separates completed local/hosted checks from remaining gaps.
 
 ## Hosted Docker runtime smoke
 
@@ -76,15 +76,16 @@ The smoke builds the actual API and standalone web images and checks:
 - Proxied database readiness, HTML, and referenced immutable JavaScript/CSS assets
 - Real container port bindings: only the web port is published, on loopback
 - API/web non-root runtime users and init processes
+- API-only dependency isolation, retained Prisma/tsx tooling, generated Prisma Client, and a native sharp WebP round trip
 - Upload-volume write permissions and persistence of an inert marker across API container recreation
 - Database outage: liveness remains available, readiness fails, then readiness recovers after restart
 
 Startup and individual commands are bounded within a 15-minute run deadline. Teardown has a separate 90-second deadline. Before removing anything, the helper inspects project/resource labels and refuses unexpected ownership; cleanup removes only its own containers, network, and disposable volumes, never a general Docker prune. Failures report bounded, credential-redacted command output and service state/health summaries. An abrupt runner termination may prevent teardown; this is why the helper is restricted to ephemeral hosted runners.
 
-The helper's pure validation tests run with `npm run test:ops` and do not start Docker. At introduction, local helper tests and workflow/static checks passed, but **the new Docker runtime job has not yet been executed**. Publication and hosted CI execution require separate approval; configuration is not a passing runtime result. Even after a successful run, this smoke does not exercise `compose.dokploy.yaml` secret-volume initialization, ingress/HTTPS, backup restoration, or rendered-browser behavior.
+The helper's pure validation tests run with `npm run test:ops` and do not start Docker. Completed hosted execution is recorded at the [verified application checkpoint](VALIDATION.md#verified-application-checkpoint-2026-10-10); local helper tests or workflow configuration alone are not runtime evidence. The smoke does not exercise `compose.dokploy.yaml` secret-volume initialization, ingress/HTTPS, backup restoration, or rendered-browser behavior. Publication and hosted CI execution remain separate approval-required actions.
 
 ## Local fixture recovery rehearsal
 
-With the existing PostgreSQL 17 tools installed, run `npm run test:restore`. It creates its own disposable cluster, unique source/target databases, fictional application/session/upload data, and private temporary files; performs a real logical dump/restore; then checks the restored API, metadata, checksums, and deliberate missing/corrupt upload cases. The source database and upload files are quiescent during capture. There is no user archive/path input, production connection fallback, or hosted CI wiring.
+With the PostgreSQL 17 tools installed, including `pg_dump` and `pg_restore`, run `npm run test:restore`. It creates its own disposable cluster, unique source/target databases, fictional application/session/upload data, and private temporary files; performs a real logical dump/restore; then checks the restored API, metadata, checksums, and deliberate missing/corrupt upload cases. The source database and upload files are quiescent during capture. There is no user archive/path input, production connection fallback, or hosted CI wiring.
 
 See [recovery rehearsal](RECOVERY-REHEARSAL.md) for exact acceptance and limitations, especially the demonstrated risk that restoring old session rows can resurrect sessions revoked after capture. This is test coverage, not an operator backup/restore tool or proof of a live cross-store snapshot strategy.

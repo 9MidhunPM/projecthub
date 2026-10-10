@@ -60,7 +60,7 @@ For development and tests: Node.js 22.22.2+ on the 22 LTS line, or 24.15.0+ on t
 
    Open http://localhost:3000. API health: http://localhost:4000/api/health. Browser requests use same-origin `/api`; Next.js proxies to port 4000. `API_INTERNAL_URL` overrides the server-side proxy destination and is baked into production rewrites at build time. Configure it before building.
 
-   Leave a shared shell `PORT` unset when starting both apps: the API defaults to 4000 and Next defaults to 3000. Exporting `PORT=4000` for both would make them compete for one port. Database-aware readiness is available at `/api/health/ready`, directly or through the frontend proxy.
+   Leave a shared shell `PORT` unset when starting both apps: the API defaults to 4000 and Next defaults to 3000. Exporting `PORT=4000` for both would make them compete for one port. Database-aware readiness is available at `/api/health/ready`, directly or through the frontend proxy. The development servers bind all interfaces; use them only in a trusted development environment. This differs from the loopback-only test harnesses and local production frontend preview.
 
 ### Production-style local containers
 
@@ -103,6 +103,8 @@ Set `PG_BIN` to PostgreSQL's binary directory if it is not detected, for example
 
 To use an existing **isolated local test database**, explicitly set `TEST_DATABASE_URL` with a database named `projecthub_test` or `projecthub_test_<suffix>`, migrate that database, and run `npm run test:integration` or `npm run test:fullstack`. These commands fail without the explicit test URL; they never fall back to `DATABASE_URL`, and reject non-loopback hosts or production mode. Never point mutating tests at production. See [testing guide](docs/TESTING.md) and [manual QA](docs/MANUAL-QA.md).
 
+For the fixture-only recovery rehearsal, also install PostgreSQL 17's `pg_dump` and `pg_restore`, then run `npm run test:restore`. It creates and restores its own fictional database/upload pair; it accepts no production backup input. See [recovery acceptance and limitations](docs/RECOVERY-REHEARSAL.md), including the risk of resurrecting revoked sessions from old backups.
+
 The audit gate permits only the exact temporary, reviewed exceptions in [dependency review](docs/DEPENDENCY-AUDIT.md). A passing policy check is not a zero-vulnerability claim.
 
 ### Local production frontend preview
@@ -129,9 +131,11 @@ API endpoints and request/response contracts: [apps/api/API-CONTRACT.md](apps/ap
 
 ## Security and operations notes
 
-Signups always create students. Faculty/admin privileges require an existing administrator. Session tokens are random; only hashes are stored. Cookies are HTTP-only, same-site Lax, and secure in production. Mutating API requests require the exact configured `Origin`; command-line API examples must send it explicitly. Uploaded screenshots are untrusted input and re-encoded by the API. Public approved project metadata excludes account email addresses, but submitted team-member text and screenshots are public content. Review student consent and privacy requirements before publication, especially for minors.
+Signups always create students. Faculty/admin privileges require an existing administrator. Session tokens are random; only hashes are stored. Cookies are HTTP-only and same-site Lax; production defaults to secure cookies, with an explicit insecure-cookie exception only for loopback HTTP development. Mutating API requests require the exact configured `Origin`; command-line API examples must send it explicitly. Uploaded screenshots are untrusted input and re-encoded by the API. Public approved project metadata excludes account email addresses, but submitted team-member text and screenshots are public content. Review student consent and privacy requirements before publication, especially for minors.
 
-Set `WEB_ORIGIN` to the exact public HTTPS origin and `COOKIE_SECURE=true` before any approved deployment. Keep secrets outside source control, persist both volumes, define retention/backups, and test restore. Do not expose PostgreSQL or the API publicly without a reviewed operational reason. Current rate limiting is process-local; multi-instance deployments need a shared limiter. The app has no email verification or self-service recovery, so production identity/account-recovery decisions remain open.
+Set `WEB_ORIGIN` to the exact public HTTPS origin and `COOKIE_SECURE=true` before any approved deployment. Keep secrets outside source control, persist `postgres_data` and `uploads` (plus `db_credentials` for the Dokploy recipe), define retention/backups, and test restore. Do not expose PostgreSQL or the API publicly without a reviewed operational reason. Current rate limiting is process-local; multi-instance deployments need a shared limiter. The app has no email verification or self-service recovery, so production identity/account-recovery decisions remain open.
+
+Upload quotas charge stored files and incomplete reservations per account; they do not cap total installation storage or provide automatic retention. Before upgrading existing data, follow the coordinated migration and legacy-size cautions in [upload storage operations](docs/UPLOAD-STORAGE.md).
 
 Deployment is a separate, approval-required action. [Dokploy preparation](docs/DOKPLOY.md) describes a path; it does not imply this app has been deployed.
 

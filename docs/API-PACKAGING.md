@@ -61,7 +61,7 @@ Passed in that fixture:
 
 `NODE_PATH` and Prisma engine overrides were unset for runtime checks. A CommonJS resolution guard rejected modules outside the fixture, except npm's own implementation while running npm commands; 55 process logs recorded no shared-checkout dependency fallback. Parent directories had no `node_modules`. The disposable database cluster and temporary upload directory were removed. The source lockfile was not changed.
 
-Actual Docker execution of this packaging change remains a separate hosted-CI check. Previous Docker results for the unscoped image do not validate this change. This experiment did not run Docker, deploy software, access production data, change credentials, or validate another CPU architecture.
+Subsequent hosted Docker execution of the scoped image is recorded separately in the [verified application checkpoint](VALIDATION.md#verified-application-checkpoint-2026-10-10). Its in-container probe checks dependency isolation, retained tooling, generated Prisma Client, and native sharp behavior; those runtime results do not turn the fixture measurements above into image-size measurements. This local experiment did not run Docker, deploy software, access production data, change credentials, or validate another CPU architecture.
 
 ## Security review remains unchanged
 
