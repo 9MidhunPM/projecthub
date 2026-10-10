@@ -15,7 +15,7 @@ This is a runnable MVP, not an institutional production rollout. Email verificat
 
 ## Prerequisites
 
-Node.js 22 LTS, npm 10+, PostgreSQL 17, and optionally Docker Compose v2. `.nvmrc` records Node 22. Run commands from the repository root unless noted.
+For development and tests: Node.js 22.22.2+ on the 22 LTS line, or 24.15.0+ on the 24 LTS line; npm 10+; PostgreSQL 17; and optionally Docker Compose v2. The minimum Node patch versions come from the pinned DOM-testing tools, not every production dependency. `.nvmrc` selects the current Node 22 line. The container recipes use `node:22-bookworm-slim`, which resolves the current 22.x image at build time. Run commands from the repository root unless noted.
 
 ## Local development
 
@@ -39,7 +39,6 @@ Node.js 22 LTS, npm 10+, PostgreSQL 17, and optionally Docker Compose v2. `.nvmr
    ```sh
    export DATABASE_URL='postgresql://projecthub:YOUR_PASSWORD@localhost:5432/projecthub?schema=public'
    export WEB_ORIGIN='http://localhost:3000'
-   export PORT=4000
    npm run db:migrate
    ```
 
@@ -60,6 +59,8 @@ Node.js 22 LTS, npm 10+, PostgreSQL 17, and optionally Docker Compose v2. `.nvmr
    ```
 
    Open http://localhost:3000. API health: http://localhost:4000/api/health. Browser requests use same-origin `/api`; Next.js proxies to port 4000. `API_INTERNAL_URL` overrides the server-side proxy destination and is baked into production rewrites at build time. Configure it before building.
+
+   Leave a shared shell `PORT` unset when starting both apps: the API defaults to 4000 and Next defaults to 3000. Exporting `PORT=4000` for both would make them compete for one port. Database-aware readiness is available at `/api/health/ready`, directly or through the frontend proxy.
 
 ### Production-style local containers
 
@@ -86,9 +87,27 @@ See [validation record](docs/VALIDATION.md) for completed checks and explicit li
 npm run typecheck
 npm test
 npm run build
+npm run security:audit
 ```
 
-Set `DATABASE_URL` to an isolated migrated test database to include the API integration test; without it, that test is explicitly skipped. The test starts its own compiled API on port 4017 and cleans up its records. `npm test` builds the API and runs backend tests; the frontend `test` script currently performs TypeScript checking, not UI interaction tests. Never point mutating tests at production. Consult [manual QA](docs/MANUAL-QA.md) for full browser and role coverage; build success alone does not establish functional correctness.
+`npm test` runs API unit tests, frontend helper/DOM interaction tests, and operations/script tests. It deliberately removes inherited database URLs from unit-test children. Type checking is a separate command. DOM tests use jsdom and do not establish actual browser rendering, layout, or keyboard accessibility.
+
+With PostgreSQL's `initdb`, `pg_ctl`, and `createdb` installed, run a fully disposable database suite as a non-root user:
+
+```sh
+npm run test:db
+npm run test:db -- npm run test:fullstack
+```
+
+Set `PG_BIN` to PostgreSQL's binary directory if it is not detected, for example `/usr/lib/postgresql/17/bin`. Each invocation initializes its own temporary, loopback-only database, applies checked-in migrations, runs the command, then stops and removes the cluster. The full-stack command builds and runs the same standalone frontend layout used by `Dockerfile.web`, checks real HTTP routes and the same-origin API proxy, and removes its test accounts/uploads. Do not run concurrent web builds in the same checkout.
+
+To use an existing **isolated local test database**, explicitly set `TEST_DATABASE_URL` with a database named `projecthub_test` or `projecthub_test_<suffix>`, migrate that database, and run `npm run test:integration` or `npm run test:fullstack`. These commands fail without the explicit test URL; they never fall back to `DATABASE_URL`, and reject non-loopback hosts or production mode. Never point mutating tests at production. See [testing guide](docs/TESTING.md) and [manual QA](docs/MANUAL-QA.md).
+
+The audit gate permits only the exact temporary, reviewed exceptions in [dependency review](docs/DEPENDENCY-AUDIT.md). A passing policy check is not a zero-vulnerability claim.
+
+### Local production frontend preview
+
+Build with the intended `API_INTERNAL_URL`, then run `npm run start -w @projecthub/web`. This prepares public/static assets beside the generated standalone server and listens on loopback port 3000 by default (`WEB_HOST` and `WEB_PORT` override it). Start the compiled API separately with its local database and matching `WEB_ORIGIN`. Changing the API destination requires rebuilding the frontend.
 
 ## Project layout
 
@@ -102,6 +121,7 @@ compose.dev.yaml         Optional loopback DB access for local Node development
 compose.dokploy.yaml     Approved-domain HTTPS configuration for Dokploy
 docs/ARCHITECTURE.md      Data model, trust boundaries, tradeoffs
 docs/MANUAL-QA.md         Repeatable acceptance checklist
+docs/TESTING.md           Unit, database, HTTP, and CI verification commands
 docs/DOKPLOY.md           Deployment preparation, no deployment performed
 ```
 
@@ -117,4 +137,4 @@ Deployment is a separate, approval-required action. [Dokploy preparation](docs/D
 
 Proxy trust is intentionally unset in the demo: requests through Next share its server-side IP for rate limiting. Do not enable `TRUST_PROXY_IPS` until an ingress proxy reliably overwrites client-supplied forwarding headers; trusted IP configuration alone is insufficient.
 
-For the approved `projecthub.midhunpm.in` deployment, use `compose.dokploy.yaml` in Dokploy Compose mode with Isolated Deployments enabled. It publishes no host ports, fixes the HTTPS origin/secure cookies, creates a server-local cryptographic database password once in a private persistent volume, and routes only the web service through Dokploy Domains. See the deployment guide before running it.
+The `projecthub.midhunpm.in` configuration uses `compose.dokploy.yaml` in Dokploy Compose mode with Isolated Deployments enabled. It publishes no host ports, fixes the HTTPS origin/secure cookies, creates a server-local cryptographic database password once in a private persistent volume, and routes only the web service through Dokploy Domains. Configuration in this repository does not authorize a deployment. See the deployment guide and obtain approval before running it.
