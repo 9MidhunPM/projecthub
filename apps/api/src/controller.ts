@@ -1,8 +1,8 @@
 import { Body, Controller, Delete, Get, Post, Put, Patch, Param, Query, Req, Res, UseGuards, UseInterceptors, UploadedFile, BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ConflictException, ServiceUnavailableException, Header } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, writeFile, stat } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { normalizeUpload } from './images';
 import { Prisma, ProjectStatus } from '@prisma/client';
@@ -13,6 +13,7 @@ import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensu
 import { parseProjectQuery } from './project-query';
 import { projectInclude as include, ProjectWithCounts, shapeProjects } from './project-shape';
 import { ensureModerationTransition, guardProjectWrite } from './project-state';
+import { persistUpload, UploadCapacityInterceptor } from './uploads';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
@@ -93,8 +94,32 @@ export class ApiController {
  @Delete('projects/:id/like') @UseGuards(AuthGuard) unlike(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'like',false);}
  @Put('projects/:id/bookmark') @UseGuards(AuthGuard) bookmark(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'bookmark',true);}
  @Delete('projects/:id/bookmark') @UseGuards(AuthGuard) unbookmark(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'bookmark',false);}
- @Post('uploads') @UseGuards(AuthGuard) @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5*1024*1024,files:1}})) async upload(@UploadedFile() file:Express.Multer.File,@Req() req:AuthRequest){if(!file)throw new BadRequestException('Choose an image');let buffer:Buffer;try{buffer=await normalizeUpload(file.buffer);}catch{throw new BadRequestException('Use a valid PNG, JPEG or WebP image');}await mkdir(uploadDir,{recursive:true});const name=randomUUID()+'.webp';await writeFile(resolve(uploadDir,name),buffer,{flag:'wx'});await this.db.upload.create({data:{filename:name,ownerId:req.user!.id}});return {url:'/api/uploads/'+name};}
- @Get('uploads/:filename') async image(@Param('filename') filename:string,@Req() req:AuthRequest,@Res() res:Response){if(!/^[a-f0-9-]+\.webp$/.test(filename))throw new NotFoundException();const upload=await this.db.upload.findUnique({where:{filename}});if(!upload)throw new NotFoundException();const user=await this.current(req);const published=await this.db.project.findFirst({where:{status:'APPROVED',screenshots:{has:'/api/uploads/'+filename}},select:{id:true}});if(!published&&user?.id!==upload.ownerId&&!['FACULTY','ADMIN'].includes(user?.role||''))throw new NotFoundException();res.setHeader('Cache-Control','private, no-store');res.sendFile(resolve(uploadDir,filename));}
+ @Post('uploads') @UseGuards(AuthGuard)
+ @UseInterceptors(UploadCapacityInterceptor,FileInterceptor('file',{limits:{fileSize:5*1024*1024,files:1,fields:0,parts:1,fieldNameSize:64}}))
+ async upload(@UploadedFile() file:Express.Multer.File,@Req() req:AuthRequest) {
+  if(!file) throw new BadRequestException('Choose an image');
+  let buffer:Buffer;
+  try { buffer=await normalizeUpload(file.buffer); }
+  catch { throw new BadRequestException('Use a valid PNG, JPEG or WebP image'); }
+  return persistUpload(this.db,uploadDir,req.user!.id,buffer);
+ }
+ @Get('uploads/:filename')
+ async image(@Param('filename') filename:string,@Req() req:AuthRequest,@Res() res:Response) {
+  if(!/^[a-f0-9-]+\.webp$/.test(filename)) throw new NotFoundException();
+  const upload=await this.db.upload.findUnique({where:{filename}});
+  if(!upload) throw new NotFoundException();
+  const user=await this.current(req);
+  const published=await this.db.project.findFirst({where:{status:'APPROVED',screenshots:{has:'/api/uploads/'+filename}},select:{id:true}});
+  if(!published&&user?.id!==upload.ownerId&&!['FACULTY','ADMIN'].includes(user?.role||'')) throw new NotFoundException();
+  res.setHeader('Cache-Control','private, no-store');
+  try {
+   await new Promise<void>((done,fail)=>res.sendFile(resolve(uploadDir,filename),error=>error?fail(error):done()));
+  } catch(error) {
+   if(res.headersSent) { res.destroy(); return; }
+   if((error as NodeJS.ErrnoException).code==='ENOENT') throw new NotFoundException('Image not found');
+   throw error;
+  }
+ }
  @Get('moderation/projects') @UseGuards(AuthGuard) async queue(@Req() req:AuthRequest,@Query('status') status='PENDING'){ensureReviewer(req.user!);if(!Object.values(ProjectStatus).includes(status as ProjectStatus))throw new BadRequestException('Invalid status');return shapeProjects(this.db,await this.db.project.findMany({where:{status:status as ProjectStatus},include,orderBy:{updatedAt:'asc'}}),req.user!.id);}
  @Patch('moderation/projects/:id') @UseGuards(AuthGuard)
  async moderate(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ModerationDto) {

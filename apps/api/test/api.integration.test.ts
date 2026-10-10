@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 import sharp from 'sharp';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -49,6 +49,10 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  }
  const body={title:'Integration project',description:'This project is created for integration testing of ownership and moderation.',department:'Computer Science',semester:4,type:'Web Application',techStack:['TypeScript'],teamMembers:['Owner']};
  const image=await sharp({create:{width:16,height:16,channels:3,background:'#123456'}}).png().toBuffer();const form=new FormData();form.append('file',new Blob([new Uint8Array(image)],{type:'image/png'}),'../../unsafe.png');const uploadResponse=await fetch(baseUrl+'/api/uploads',{method:'POST',headers:{Origin:'http://localhost:3000',Cookie:a.cookie},body:form});assert.equal(uploadResponse.status,201);uploaded=(await uploadResponse.json()).url;assert.match(uploaded,/^\/api\/uploads\/[a-f0-9-]+\.webp$/);assert.equal((await fetch(baseUrl+uploaded)).status,404);
+ const extraField=new FormData();extraField.append('file',new Blob([new Uint8Array(image)],{type:'image/png'}),'image.png');extraField.append('unexpected','field');
+ assert.equal((await fetch(baseUrl+'/api/uploads',{method:'POST',headers:{Origin:'http://localhost:3000',Cookie:a.cookie},body:extraField})).status,400);
+ const extraFile=new FormData();for(let index=0;index<2;index++)extraFile.append('file',new Blob([new Uint8Array(image)],{type:'image/png'}),'image.png');
+ assert.equal((await fetch(baseUrl+'/api/uploads',{method:'POST',headers:{Origin:'http://localhost:3000',Cookie:a.cookie},body:extraFile})).status,400);
  const p=await request('/projects','POST',{...body,screenshots:[uploaded]},a.cookie);assert.equal(p.status,201);const id=p.data.id;
  assert.equal((await request('/projects/'+id)).status,404);
  assert.equal((await request('/projects/'+id,'PATCH',body,b.cookie)).status,404);
@@ -80,6 +84,10 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  for(let i=0;i<2;i++)assert.equal((await request('/projects/'+id+'/like','PUT',{},b.cookie)).data.likes,1);
  for(let i=0;i<2;i++)assert.equal((await request('/projects/'+id+'/bookmark','PUT',{},b.cookie)).data.bookmarked,true);
  assert.equal((await request('/projects/'+id,'PATCH',body,a.cookie)).data.status,'DRAFT');assert.equal((await request('/projects/'+id)).status,404);
+ await unlink(join(temporaryUploads,uploaded.split('/').pop()!));
+ const missingImage=await fetch(baseUrl+uploaded,{headers:{Cookie:a.cookie}});
+ assert.equal(missingImage.status,404);
+ assert.equal((await missingImage.json()).message,'Image not found');
  assert.equal((await request('/auth/logout','POST',{},a.cookie)).status,201);assert.equal((await request('/auth/me','GET',undefined,a.cookie)).status,401);
  assert.equal((await request('/auth/logout','POST',{},a.cookie)).status,201);
  assert.equal((await request('/auth/logout','POST',{})).cookie,'ph_session=');

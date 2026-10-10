@@ -11,8 +11,9 @@ import { Db } from './db';
 import { ApiController } from './controller';
 import { AuthService, AuthGuard } from './auth';
 import { readApiConfig } from './config';
+import { UploadCapacityInterceptor } from './uploads';
 
-@Module({ controllers: [ApiController], providers: [Db, AuthService, AuthGuard] })
+@Module({ controllers: [ApiController], providers: [Db, AuthService, AuthGuard, UploadCapacityInterceptor] })
 export class AppModule {}
 
 export async function bootstrap(options: { port?: number; host?: string } = {}) {

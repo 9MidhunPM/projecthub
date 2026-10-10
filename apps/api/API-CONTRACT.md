@@ -13,6 +13,7 @@ Optional request fields may be omitted but cannot be `null`. Human-readable text
 - POST /projects/:id/submit -> project (PENDING).
   Projects expose a monotonic `version` counter for content/workflow changes. Concurrent edits, submissions, deletion, and moderation are checked against the version observed by that request; a lost race returns 409 with a reload instruction. View counts do not change this version. This protects in-flight writes; clients should still reload before editing an old tab.
 - POST /uploads multipart field `file` -> {url}; PNG/JPEG/WebP up to 5 MB, authenticated. Use returned URL in screenshots.
+  Exactly one file part and no extra form fields are accepted. At most two uploads are parsed/processed concurrently per API process; excess requests return 503 and `Retry-After: 1`. Files are removed if recording ownership fails. Missing stored image files return 404.
 - PUT /projects/:id/like and DELETE /projects/:id/like; PUT /projects/:id/bookmark and DELETE /projects/:id/bookmark -> {liked,bookmarked,likes}.
 - GET /moderation/projects?status=PENDING -> project[] (faculty/admin); PATCH /moderation/projects/:id {status:APPROVED|CHANGES_REQUESTED|HIDDEN,feedback?:string}.
   Unsubmitted drafts cannot be moderated. Approval requires PENDING; requesting changes requires nonblank feedback and may reopen hidden or published work. Successful moderation and its audit entry commit atomically.
