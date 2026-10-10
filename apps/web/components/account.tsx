@@ -5,6 +5,7 @@ import {api, Page, User, departments, initials, isAbortError} from '@/lib/api';
 import {useApiResource} from '@/lib/use-api-resource';
 import {useCollectionQuery} from '@/lib/use-collection-query';
 import {Pagination} from './pagination';
+import {AuditHistory} from './audit-history';
 import {Guard, useApp, ErrorMessage, Loading} from './shell';
 
 export function Profile() { return <Guard><ProfileForm/></Guard>; }
@@ -72,6 +73,7 @@ function AdminContent() {
   const {data: users, error: loadError, loading, reload, setData} = useApiResource<Page<User>>(ready ? `/admin/users?${new URLSearchParams({page: String(query.page), limit: '25', ...(query.q ? {q: query.q} : {}), ...(query.role ? {role: query.role} : {})})}` : null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [auditRevision, setAuditRevision] = useState(0);
   const [search, setSearch] = useState('');
   const request = useRef<AbortController | null>(null);
   const visible = users?.items ?? [];
@@ -100,6 +102,7 @@ function AdminContent() {
       if (controller.signal.aborted) return;
       setData(previous => previous ? {...previous, items: previous.items.flatMap(account => account.id !== target.id ? [account] : !query.role || updated.role === query.role ? [updated] : [])} : previous);
       reload();
+      setAuditRevision(value => value + 1);
       notify(`${target.name}'s role is now ${nextRole.toLowerCase()}.`);
     } catch (failure) {
       if (!controller.signal.aborted && !isAbortError(failure)) setError((failure as Error).message);
@@ -125,5 +128,6 @@ function AdminContent() {
       <Pagination data={users} busy={loading || Boolean(busy) || Boolean(loadError) || search.trim() !== query.q} label="People" onPage={page => changeQuery({page})}/>
     </>}
     <p className="muted small-note">Faculty can review project submissions. Administrators can also manage user roles. Your own role cannot be changed here.</p>
+    <AuditHistory revision={auditRevision}/>
   </div>;
 }

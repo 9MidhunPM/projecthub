@@ -33,6 +33,7 @@ test('admin filters have an empty state and cancelled role changes keep the orig
   let changes = 0;
   globalThis.fetch = async (url, options) => {
     if (String(url).endsWith('/auth/me')) return Response.json(administrator);
+    if (String(url).includes('/admin/audit?')) return Response.json(listing([], 0, 1, 25));
     if (options?.method === 'PATCH') { changes += 1; return Response.json({...student, role: 'FACULTY'}); }
     const query = new URL(String(url), 'http://localhost:3000').searchParams.get('q');
     return Response.json(listing(query ? [] : [administrator, student], query ? 0 : 2, 1, 25));
@@ -59,6 +60,7 @@ test('admin search queries the server and reaches accounts outside the first pag
   const requests: string[] = [];
   globalThis.fetch = async url => {
     if (String(url).endsWith('/auth/me')) return Response.json(administrator);
+    if (String(url).includes('/admin/audit?')) return Response.json(listing([], 0, 1, 25));
     requests.push(String(url));
     const query = new URL(String(url), 'http://localhost:3000').searchParams.get('q');
     return Response.json(query ? listing([{...student, id: 'oldest', name: 'Oldest account', email: 'oldest@example.test'}], 1, 1, 25) : listing([administrator], 550, 1, 25));
@@ -81,6 +83,7 @@ test('role changes refill the filtered page and recover when its final page disa
   let changed = false;
   globalThis.fetch = async (url, options) => {
     if (String(url).endsWith('/auth/me')) return Response.json(administrator);
+    if (String(url).includes('/admin/audit?')) return Response.json(listing([], 0, 1, 25));
     if (options?.method === 'PATCH') { changed = true; return Response.json({...student, role: 'FACULTY'}); }
     const page = Number(new URL(String(url), 'http://localhost:3000').searchParams.get('page'));
     pages.push(page);
