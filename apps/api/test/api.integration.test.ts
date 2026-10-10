@@ -44,7 +44,7 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  const a=await signup('Owner'),b=await signup('Other'),reviewer=await signup('Reviewer'),admin=await signup('Admin');await db.user.update({where:{id:admin.data.id},data:{role:'ADMIN'}});await db.user.update({where:{id:reviewer.data.id},data:{role:'FACULTY'}});
  assert.equal((await request('/auth/signup','POST',{name:'Attack',email:`attack-${suffix}@test.example`,password:'a-secure-test-password',department:'CS',semester:1,role:'ADMIN'})).status,400);
  assert.equal((await request('/auth/login','POST',{email:`Owner-${suffix}@test.example`,password:'a-secure-test-password'},'','https://evil.example')).status,403);
- for (const query of ['q=a&q=b', 'department=a&department=b', 'page=1.5', 'page=Infinity', 'limit=49', 'semester=13', 'sort=unknown']) {
+ for (const query of ['q=a&q=b', 'department=a&department=b', 'q%5Bterm%5D=a', 'q%5B%5D=a', 'page%5Bgt%5D=1', 'page=1.5', 'page=Infinity', 'limit=49', 'semester=13', 'sort=unknown']) {
   assert.equal((await request('/projects?' + query)).status, 400, query);
  }
  const body={title:'Integration project',description:'This project is created for integration testing of ownership and moderation.',department:'Computer Science',semester:4,type:'Web Application',techStack:['TypeScript'],teamMembers:['Owner']};

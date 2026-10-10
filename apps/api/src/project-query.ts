@@ -24,6 +24,12 @@ function integer(query: Record<string, unknown>, name: string, max: number, fall
 }
 
 export function parseProjectQuery(query: Record<string, unknown>) {
+  const supported = new Set(['q', 'department', 'semester', 'type', 'tech', 'page', 'limit', 'sort']);
+  if (Object.keys(query).some(key => !supported.has(key))) {
+    // Express's simple parser keeps bracket syntax as literal keys instead of
+    // nested objects. Reject those too rather than silently dropping filters.
+    throw new BadRequestException('Unsupported project query parameter');
+  }
   const page = integer(query, 'page', 10000, 1);
   const limit = integer(query, 'limit', 48, 12);
   const search = text(query, 'q', 200);

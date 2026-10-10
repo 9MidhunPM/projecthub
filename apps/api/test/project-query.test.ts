@@ -11,6 +11,9 @@ test('project queries default to a bounded stable approved-only page', () => {
 });
 
 test('query parameters reject duplicate, structured and oversized inputs', () => {
+  for (const key of ['q[term]', 'q[]', 'page[gt]', 'unknown']) {
+    assert.throws(() => parseProjectQuery({ [key]: 'value' }), BadRequestException);
+  }
   for (const field of ['q', 'department', 'type', 'tech', 'sort', 'page', 'limit', 'semester']) {
     for (const value of [['one', 'two'], { nested: 'value' }, null, 1]) {
       assert.throws(() => parseProjectQuery({ [field]: value }), BadRequestException);
