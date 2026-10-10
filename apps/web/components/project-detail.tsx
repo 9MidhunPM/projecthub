@@ -1,11 +1,12 @@
 'use client';
 
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {ArrowLeft, ArrowUpRight, Github, Heart, Bookmark, Users, Eye, Pencil, ChevronLeft, ChevronRight, ImageOff} from 'lucide-react';
-import {api, ApiError, Engagement, Project, initials, isAbortError} from '@/lib/api';
+import {api, ApiError, Project, initials, isAbortError} from '@/lib/api';
 import {authHref} from '@/lib/auth-navigation';
+import {useProjectEngagement} from '@/lib/use-project-engagement';
 import {useApp, Loading, ErrorMessage} from './shell';
 import {ProjectCover} from './project-card';
 import {Status} from './workspace';
@@ -19,14 +20,10 @@ function Detail({id}: {id: string}) {
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState(0);
   const [failedImage, setFailedImage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState(0);
-  const pending = useRef(false);
-  const mounted = useRef(true);
   const {user, loading: sessionLoading, notify} = useApp();
   const router = useRouter();
 
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     if (sessionLoading) return;
     const controller = new AbortController();
@@ -51,22 +48,19 @@ function Detail({id}: {id: string}) {
     return () => controller.abort();
   }, [id, sessionLoading, user?.id, retry]);
 
-  async function toggle(kind: 'like' | 'bookmark') {
-    if (!project || pending.current) return;
-    if (!user) { router.push(authHref(false, `/projects/${id}`)); return; }
-    pending.current = true;
-    setBusy(true);
-    try {
-      const engagement = await api<Engagement>(`/projects/${id}/${kind}`, {method: (kind === 'like' ? project.liked : project.bookmarked) ? 'DELETE' : 'PUT'});
-      if (!mounted.current) return;
+  const {busy, toggle: toggleEngagement} = useProjectEngagement({
+    project, userId: user?.id, sessionLoading,
+    onSuccess(engagement, kind) {
       setProject(previous => previous ? {...previous, ...engagement} : previous);
       if (kind === 'bookmark') notify(engagement.bookmarked ? 'Project saved to Bookmarks.' : 'Project removed from Bookmarks.');
-    } catch (failure) {
-      if (mounted.current) notify((failure as Error).message);
-    } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
-    }
+    },
+    onError: failure => notify(failure.message),
+  });
+
+  function toggle(kind: 'like' | 'bookmark') {
+    if (!project || busy || sessionLoading) return;
+    if (!user) { router.push(authHref(false, `/projects/${id}`)); return; }
+    void toggleEngagement(kind);
   }
 
   if (loading) return <Loading message="Loading project…"/>;
@@ -82,8 +76,8 @@ function Detail({id}: {id: string}) {
       <div><div className="detail-meta">{p.department} <span>·</span> Semester {p.semester} <span>·</span> {p.type}</div><h1>{p.title}</h1><span className="author"><span className="avatar" aria-hidden="true">{initials(p.owner?.name || 'Student')}</span><span>Built by <strong>{p.owner?.name || 'Student'}</strong></span></span></div>
       <div className="detail-actions">
         {user?.id === p.ownerId && <Link className="button" href={`/projects/${id}/edit`}><Pencil size={17} aria-hidden="true"/>Edit project</Link>}
-        <button disabled={busy || p.status !== 'APPROVED'} className={`button ${p.liked ? 'selected' : ''}`} onClick={() => void toggle('like')} aria-pressed={p.liked} aria-label={`${p.liked ? 'Unlike' : 'Like'} ${p.title}, ${p.likes} likes`}><Heart size={18} fill={p.liked ? 'currentColor' : 'none'} aria-hidden="true"/>{p.likes}</button>
-        <button disabled={busy || p.status !== 'APPROVED'} className={`button ${p.bookmarked ? 'selected' : ''}`} onClick={() => void toggle('bookmark')} aria-pressed={p.bookmarked} aria-label={`${p.bookmarked ? 'Unsave' : 'Save'} ${p.title}`}><Bookmark size={18} fill={p.bookmarked ? 'currentColor' : 'none'} aria-hidden="true"/>{p.bookmarked ? 'Saved' : 'Save'}</button>
+        <button disabled={busy || sessionLoading || p.status !== 'APPROVED'} className={`button ${p.liked ? 'selected' : ''}`} onClick={() => void toggle('like')} aria-pressed={p.liked} aria-label={`${p.liked ? 'Unlike' : 'Like'} ${p.title}, ${p.likes} likes`}><Heart size={18} fill={p.liked ? 'currentColor' : 'none'} aria-hidden="true"/>{p.likes}</button>
+        <button disabled={busy || sessionLoading || p.status !== 'APPROVED'} className={`button ${p.bookmarked ? 'selected' : ''}`} onClick={() => void toggle('bookmark')} aria-pressed={p.bookmarked} aria-label={`${p.bookmarked ? 'Unsave' : 'Save'} ${p.title}`}><Bookmark size={18} fill={p.bookmarked ? 'currentColor' : 'none'} aria-hidden="true"/>{p.bookmarked ? 'Saved' : 'Save'}</button>
       </div>
     </div>
     {p.status !== 'APPROVED' && <div className="review-note"><Status value={p.status}/><span>{p.feedback || 'This project is not publicly listed yet.'}</span></div>}
