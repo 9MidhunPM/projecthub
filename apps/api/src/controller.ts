@@ -19,6 +19,7 @@ import { changeUserRole } from './roles';
 import { parseAuditCollectionQuery, parseProjectCollectionQuery, parseUserCollectionQuery } from './collection-query';
 import { pageResult } from './query-params';
 import { readUploadLimits } from './config';
+import { guardEngagementWrite } from './project-engagement';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
@@ -161,8 +162,46 @@ export class ApiController {
   }));
   return this.shape(updated,req.user!.id);
  }
- @Post('projects/:id/view') async view(@Param('id') id:string,@Req() req:AuthRequest,@Res({passthrough:true}) res:Response){const p=await this.project(id,req);if(p.status!=='APPROVED')return {views:p.views};let visitor=req.cookies?.ph_visitor;if(typeof visitor!=='string'||!/^[a-f0-9]{64}$/.test(visitor)){visitor=randomBytes(32).toString('hex');res.cookie('ph_visitor',visitor,{httpOnly:true,sameSite:'lax',secure:secureCookie(),path:'/api',maxAge:365*86400000});}const key={projectId:id,visitor:digest(req.user?.id||visitor),day:new Date().toISOString().slice(0,10)};try{await this.db.$transaction([this.db.viewEvent.create({data:key}),this.db.project.update({where:{id},data:{views:{increment:1}}})]);}catch(e){if(!(e instanceof Prisma.PrismaClientKnownRequestError&&e.code==='P2002'))throw e;}return {views:(await this.db.project.findUniqueOrThrow({where:{id}})).views};}
- private async toggle(id:string,req:AuthRequest,kind:'like'|'bookmark',on:boolean){const p=await this.project(id,req);if(p.status!=='APPROVED')throw new BadRequestException('Project must be approved');const key={userId:req.user!.id,projectId:id};if(kind==='like'){if(on)await this.db.like.upsert({where:{userId_projectId:key},create:key,update:{}});else await this.db.like.deleteMany({where:key});}else{if(on)await this.db.bookmark.upsert({where:{userId_projectId:key},create:key,update:{}});else await this.db.bookmark.deleteMany({where:key});}const shaped=await this.shape(await this.db.project.findUniqueOrThrow({where:{id},include}),req.user!.id);return {liked:shaped.liked,bookmarked:shaped.bookmarked,likes:shaped.likes};}
+ @Post('projects/:id/view')
+ async view(@Param('id') id:string,@Req() req:AuthRequest,@Res({passthrough:true}) res:Response) {
+  const project=await this.project(id,req);
+  if(project.status!=='APPROVED') return {views:project.views};
+  let visitor=req.cookies?.ph_visitor;
+  if(typeof visitor!=='string'||!/^[a-f0-9]{64}$/.test(visitor)) {
+   visitor=randomBytes(32).toString('hex');
+   res.cookie('ph_visitor',visitor,{httpOnly:true,sameSite:'lax',secure:secureCookie(),path:'/api',maxAge:365*86400000});
+  }
+  const key={projectId:id,visitor:digest(req.user?.id||visitor),day:new Date().toISOString().slice(0,10)};
+  try {
+   await guardEngagementWrite(this.db,id,()=>this.db.$transaction([
+    this.db.viewEvent.create({data:key}),
+    this.db.project.update({where:{id},data:{views:{increment:1}}}),
+   ]));
+  } catch(error) {
+   if(!(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')) throw error;
+  }
+  const result=await this.db.project.findUnique({where:{id},select:{views:true}});
+  if(!result) throw new NotFoundException('Project not found');
+  return result;
+ }
+ private async toggle(id:string,req:AuthRequest,kind:'like'|'bookmark',on:boolean) {
+  const project=await this.project(id,req);
+  if(project.status!=='APPROVED') throw new BadRequestException('Project must be approved');
+  const key={userId:req.user!.id,projectId:id};
+  await guardEngagementWrite(this.db,id,async()=>{
+   if(kind==='like') {
+    if(on) await this.db.like.upsert({where:{userId_projectId:key},create:key,update:{}});
+    else await this.db.like.deleteMany({where:key});
+   } else {
+    if(on) await this.db.bookmark.upsert({where:{userId_projectId:key},create:key,update:{}});
+    else await this.db.bookmark.deleteMany({where:key});
+   }
+  });
+  const current=await this.db.project.findUnique({where:{id},include});
+  if(!current) throw new NotFoundException('Project not found');
+  const shaped=await this.shape(current,req.user!.id);
+  return {liked:shaped.liked,bookmarked:shaped.bookmarked,likes:shaped.likes};
+ }
  @Put('projects/:id/like') @UseGuards(AuthGuard) like(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'like',true);}
  @Delete('projects/:id/like') @UseGuards(AuthGuard) unlike(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'like',false);}
  @Put('projects/:id/bookmark') @UseGuards(AuthGuard) bookmark(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'bookmark',true);}
