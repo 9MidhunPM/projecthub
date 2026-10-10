@@ -5,6 +5,7 @@ const { randomBytes } = require('node:crypto');
 const { resolve } = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const { startProcess, stopProcess, unusedPort } = require('./process-utils.cjs');
+const { apiPackageProbeSource } = require('./api-package-probe.cjs');
 
 const root = resolve(__dirname, '..');
 const fixturePassword = 'ci-only-local-password';
@@ -157,6 +158,8 @@ async function main() {
     await run([...compose, 'build'], { timeoutMs: 10 * 60 * 1000 });
     await run([...compose, 'up', '--detach', '--wait', '--wait-timeout', '180'], { timeoutMs: 200000 });
     validateRuntime(await inventory('container', { signal: controller.signal }), project, port);
+    await run([...compose, 'exec', '-T', 'api', 'node', '-e', apiPackageProbeSource()]);
+    console.log('API package isolation, generated client, and native image codec verified.');
     const fetchLocal = async path => fetch(`${base}${path}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]), redirect: 'error' });
     const waitForReadiness = async expected => {
       const until = Date.now() + 60000;
