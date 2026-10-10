@@ -1,8 +1,114 @@
 'use client';
-import {useState,useEffect} from 'react';
-import {api,User,departments,initials} from '@/lib/api';
-import {Guard,useApp,ErrorMessage,Loading} from './shell';
-export function Profile(){return <Guard><ProfileForm/></Guard>}
-function ProfileForm(){const {user,refresh,notify}=useApp();const [error,setError]=useState('');const [busy,setBusy]=useState(false);async function save(e:React.FormEvent<HTMLFormElement>){e.preventDefault();setBusy(true);setError('');const f=Object.fromEntries(new FormData(e.currentTarget));try{await api('/profile',{method:'PATCH',body:JSON.stringify({...f,semester:Number(f.semester)})});await refresh();notify('Profile updated.')}catch(e){setError((e as Error).message)}finally{setBusy(false)}}return <div className="page-container profile-page"><div className="page-title"><div><h1>A little about you.</h1><p>Put a person behind the projects.</p></div></div><section className="form-panel"><div className="profile-heading"><span className="avatar large">{initials(user!.name)}</span><div><h2>{user!.name}</h2><p>{user!.email}</p><span className="status">{user!.role.toLowerCase()}</span></div></div><form onSubmit={save}><ErrorMessage message={error}/><label>Full name<input name="name" required minLength={2} maxLength={80} defaultValue={user!.name}/></label><div className="form-grid"><label>Department<select name="department" defaultValue={user!.department}>{departments.map(d=><option key={d}>{d}</option>)}</select></label><label>Semester<select name="semester" defaultValue={user!.semester}>{Array.from({length:12},(_,i)=><option value={i+1} key={i}>Semester {i+1}</option>)}</select></label></div><label>Bio <span className="optional">(optional)</span><textarea name="bio" rows={4} maxLength={1000} defaultValue={user!.bio ?? ''} placeholder="What are you curious about?"/></label><button className="button primary" disabled={busy}>{busy?'Saving…':'Save profile'}</button></form></section></div>}
-export function Admin(){return <Guard roles={['ADMIN']}><AdminContent/></Guard>}
-function AdminContent(){const {user,notify}=useApp();const [users,setUsers]=useState<User[]|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState('');const [search,setSearch]=useState('');useEffect(()=>{api<User[]>('/admin/users').then(setUsers).catch(e=>setError(e.message))},[]);async function change(target:User,role:string){if(role===target.role)return;if(!window.confirm(`Change ${target.name}'s role to ${role.toLowerCase()}? This changes their access to ProjectHub.`))return;setBusy(target.id);setError('');try{await api(`/admin/users/${target.id}/role`,{method:'PATCH',body:JSON.stringify({role})});setUsers(previous=>previous!.map(u=>u.id===target.id?{...u,role:role as User['role']}:u));notify('Role updated.')}catch(e){setError((e as Error).message)}finally{setBusy('')}}return <div className="page-container"><div className="page-title"><div><h1>People & permissions</h1><p>Manage who can share, review, and administer your community.</p></div></div><ErrorMessage message={error}/><input className="admin-search" placeholder="Search by name or email" aria-label="Search users" value={search} onChange={e=>setSearch(e.target.value)}/>{!users&&!error?<Loading/>:<div className="users-list">{users?.filter(u=>`${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase())).map(u=><div className="user-row" key={u.id}><span className="avatar">{initials(u.name)}</span><div className="user-info"><strong>{u.name}{u.id===user?.id?' (you)':''}</strong><span>{u.email}</span></div><span className="user-department">{u.department}</span><label className="sr-only" htmlFor={`role-${u.id}`}>Role for {u.name}</label><select id={`role-${u.id}`} value={u.role} disabled={busy===u.id||u.id===user?.id} onChange={e=>change(u,e.target.value)}><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select></div>)}</div>}<p className="muted small-note">Faculty can review project submissions. Administrators can also manage user roles. Your own role cannot be changed here.</p></div>}
+
+import {useEffect, useRef, useState} from 'react';
+import {api, User, departments, initials, isAbortError} from '@/lib/api';
+import {useApiResource} from '@/lib/use-api-resource';
+import {Guard, useApp, ErrorMessage, Loading} from './shell';
+
+export function Profile() { return <Guard><ProfileForm/></Guard>; }
+
+function ProfileForm() {
+  const {user, refresh, notify} = useApp();
+  const [form, setForm] = useState({name: user!.name, department: user!.department, semester: String(user!.semester), bio: user!.bio ?? ''});
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const request = useRef<AbortController | null>(null);
+  const errorSummary = useRef<HTMLDivElement>(null);
+
+  useEffect(() => () => { request.current?.abort(); }, []);
+  useEffect(() => { if (error) errorSummary.current?.focus(); }, [error]);
+
+  async function save(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (request.current) return;
+    if (form.name.trim().length < 2) { setError('Enter your full name using at least 2 characters.'); return; }
+    const controller = new AbortController();
+    request.current = controller;
+    setBusy(true);
+    setError('');
+    try {
+      const updated = await api<User>('/profile', {method: 'PATCH', body: JSON.stringify({...form, name: form.name.trim(), bio: form.bio.trim(), semester: Number(form.semester)}), signal: controller.signal});
+      if (controller.signal.aborted) return;
+      setForm({name: updated.name, department: updated.department, semester: String(updated.semester), bio: updated.bio ?? ''});
+      await refresh();
+      if (!controller.signal.aborted) notify('Profile updated.');
+    } catch (failure) {
+      if (!controller.signal.aborted && !isAbortError(failure)) setError((failure as Error).message);
+    } finally {
+      if (!controller.signal.aborted) { request.current = null; setBusy(false); }
+    }
+  }
+
+  return <div className="page-container profile-page">
+    <div className="page-title"><div><h1>A little about you.</h1><p>Put a person behind the projects.</p></div></div>
+    <section className="form-panel">
+      <div className="profile-heading"><span className="avatar large" aria-hidden="true">{initials(user!.name)}</span><div><h2>{user!.name}</h2><p>{user!.email}</p><span className="status">{user!.role.toLowerCase()}</span></div></div>
+      <form onSubmit={save} aria-busy={busy}>
+        <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage message={error}/></div>
+        <fieldset className="form-fields" disabled={busy}>
+          <label>Full name<input name="name" autoComplete="name" required minLength={2} maxLength={80} value={form.name} onChange={event => setForm(previous => ({...previous, name: event.target.value}))}/></label>
+          <div className="form-grid">
+            <label>Department<select name="department" value={form.department} onChange={event => setForm(previous => ({...previous, department: event.target.value}))}>{!departments.includes(form.department) && <option>{form.department}</option>}{departments.map(department => <option key={department}>{department}</option>)}</select></label>
+            <label>Semester<select name="semester" value={form.semester} onChange={event => setForm(previous => ({...previous, semester: event.target.value}))}>{Array.from({length: 12}, (_, index) => <option value={index + 1} key={index}>Semester {index + 1}</option>)}</select></label>
+          </div>
+          <label>Bio <span className="optional">(optional)</span><textarea name="bio" rows={4} maxLength={1000} value={form.bio} onChange={event => setForm(previous => ({...previous, bio: event.target.value}))} aria-describedby="bio-hint" placeholder="What are you curious about?"/></label>
+          <p id="bio-hint" className="field-hint">{form.bio.length}/1,000 characters. Profile details can be included with your published projects.</p>
+          <button className="button primary" type="submit" disabled={busy}>{busy ? 'Saving profile…' : 'Save profile'}</button>
+        </fieldset>
+      </form>
+    </section>
+  </div>;
+}
+
+export function Admin() { return <Guard roles={['ADMIN']}><AdminContent/></Guard>; }
+
+function AdminContent() {
+  const {user, notify} = useApp();
+  const {data: users, error: loadError, loading, reload, setData} = useApiResource<User[]>('/admin/users');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const [search, setSearch] = useState('');
+  const [role, setRole] = useState('');
+  const request = useRef<AbortController | null>(null);
+  const visible = users?.filter(account => `${account.name} ${account.email}`.toLowerCase().includes(search.trim().toLowerCase()) && (!role || role === account.role)) ?? [];
+
+  useEffect(() => () => { request.current?.abort(); }, []);
+
+  async function change(target: User, nextRole: User['role']) {
+    if (request.current || nextRole === target.role || target.id === user?.id) return;
+    if (!window.confirm(`Change ${target.name} (${target.email}) from ${target.role.toLowerCase()} to ${nextRole.toLowerCase()}? This changes their access to ProjectHub.`)) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setBusy(target.id);
+    setError('');
+    try {
+      const updated = await api<User>(`/admin/users/${target.id}/role`, {method: 'PATCH', body: JSON.stringify({role: nextRole}), signal: controller.signal});
+      if (controller.signal.aborted) return;
+      setData(previous => previous?.map(account => account.id === target.id ? updated : account) ?? null);
+      notify(`${target.name}'s role is now ${nextRole.toLowerCase()}.`);
+    } catch (failure) {
+      if (!controller.signal.aborted && !isAbortError(failure)) setError((failure as Error).message);
+    } finally {
+      if (!controller.signal.aborted) { request.current = null; setBusy(''); }
+    }
+  }
+
+  return <div className="page-container">
+    <div className="page-title"><div><h1>People & permissions</h1><p>Manage who can share, review, and administer your community.</p></div></div>
+    <ErrorMessage message={loadError || error}/>
+    {loadError && <div className="results-recovery"><button className="button" onClick={reload}>Try again</button></div>}
+    <div className="people-filters">
+      <label className="people-search">Find a person<input type="search" placeholder="Search by name or email" aria-label="Search users" value={search} onChange={event => setSearch(event.target.value)}/></label>
+      <label>Role<select value={role} onChange={event => setRole(event.target.value)}><option value="">All roles</option><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select></label>
+    </div>
+    {!users && loading ? <Loading message="Loading people…"/> : users && <>
+      <p className="collection-count" role="status">{visible.length} of {users.length} people{busy ? ' · Updating role…' : ''}</p>
+      {visible.length ? <div className="users-list" aria-label="People" role="list" aria-busy={Boolean(busy) || loading}>{visible.map(account => <div className="user-row" role="listitem" key={account.id}>
+        <span className="avatar" aria-hidden="true">{initials(account.name)}</span><div className="user-info"><strong>{account.name}{account.id === user?.id ? ' (you)' : ''}</strong><span>{account.email}</span></div><span className="user-department">{account.department}</span>
+        <label className="sr-only" htmlFor={`role-${account.id}`}>Role for {account.name}</label><select id={`role-${account.id}`} value={account.role} disabled={Boolean(busy) || account.id === user?.id} onChange={event => void change(account, event.target.value as User['role'])}><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option><option value="ADMIN">Admin</option></select>
+      </div>)}</div> : <div className="empty"><h2>{search.trim() || role ? 'No people match these filters.' : 'No accounts to show.'}</h2>{(search.trim() || role) && <button className="button" onClick={() => { setSearch(''); setRole(''); }}>Clear people filters</button>}</div>}
+      {users.length >= 500 && <p className="muted small-note">Showing the 500 most recent accounts. Search and role filters apply to this loaded list.</p>}
+    </>}
+    <p className="muted small-note">Faculty can review project submissions. Administrators can also manage user roles. Your own role cannot be changed here.</p>
+  </div>;
+}
