@@ -9,7 +9,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { PrismaClient } = require('@prisma/client');
 const sharp = require('sharp');
 const { assertTestDatabaseUrl } = require('../test-database.cjs');
-const { unusedPort, startProcess, stopProcess, run } = require('../process-utils.cjs');
+const { unusedPort, startProcess, stopProcess, createCommandScope } = require('../process-utils.cjs');
 
 const root = resolve(__dirname, '../..');
 const databaseUrl = assertTestDatabaseUrl(process.env.TEST_DATABASE_URL);
@@ -71,12 +71,15 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
   const nonce = randomUUID().slice(0, 8);
   const env = { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl, NODE_ENV: 'test', WEB_ORIGIN: base, COOKIE_SECURE: 'false', UPLOAD_DIR: uploads, API_INTERNAL_URL: `http://127.0.0.1:${apiPort}`, NEXT_TELEMETRY_DISABLED: '1' };
   const db = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  const builds = createCommandScope();
   const users = [];
   const filenames = [];
   let api;
   let web;
   let cleanupPromise;
   const cleanup = () => cleanupPromise ||= (async () => {
+    // Cancel and await detached build processes before exiting this test owner.
+    await builds.close();
     await stopProcess(web);
     await stopProcess(api);
     try {
@@ -100,8 +103,8 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
 
   const npm = process.env.npm_execpath;
   assert(npm, 'Run this suite through npm run test:fullstack.');
-  await run(process.execPath, [npm, 'run', 'build', '-w', '@projecthub/api'], { cwd: root, env });
-  await run(process.execPath, [npm, 'run', 'build', '-w', '@projecthub/web'], { cwd: root, env: { ...env, NODE_ENV: 'production' }, timeoutMs: 180000 });
+  await builds.run(process.execPath, [npm, 'run', 'build', '-w', '@projecthub/api'], { cwd: root, env });
+  await builds.run(process.execPath, [npm, 'run', 'build', '-w', '@projecthub/web'], { cwd: root, env: { ...env, NODE_ENV: 'production' }, timeoutMs: 180000 });
   // Mirror Dockerfile.web exactly in a separate directory, outside the checkout.
   // This prevents the smoke test from silently using untraced dev dependencies.
   await cp(resolve(root, 'apps/web/.next/standalone'), runtime, { recursive: true, verbatimSymlinks: true });

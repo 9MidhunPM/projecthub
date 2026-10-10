@@ -63,12 +63,12 @@ async function stopProcess(handle, graceMs = 5000) {
   return handle.stopping;
 }
 
-async function run(command, args, { timeoutMs = 120000, signal, ...options } = {}) {
+async function run(command, args, { timeoutMs = 120000, stopGraceMs = 5000, signal, ...options } = {}) {
   if (signal?.aborted) throw new Error('Command interrupted.');
   const handle = startProcess(command, args, options);
   let timedOut = false;
   let result;
-  const cancel = () => { void stopProcess(handle); };
+  const cancel = () => { void stopProcess(handle, stopGraceMs).catch(() => {}); };
   signal?.addEventListener('abort', cancel, { once: true });
   const timer = setTimeout(() => { timedOut = true; cancel(); }, timeoutMs);
   try {
@@ -82,8 +82,26 @@ async function run(command, args, { timeoutMs = 120000, signal, ...options } = {
     signal?.removeEventListener('abort', cancel);
     // Successful one-shot commands may intentionally daemonize (pg_ctl start).
     // Explicit cancellation and failures still own cleanup of all descendants.
-    if (result?.code !== 0 || timedOut || signal?.aborted) await stopProcess(handle);
+    if (result?.code !== 0 || timedOut || signal?.aborted) await stopProcess(handle, stopGraceMs);
   }
 }
 
-module.exports = { unusedPort, startProcess, stopProcess, run };
+function createCommandScope() {
+  const controller = new AbortController();
+  const commands = new Set();
+  return {
+    run(command, args, options = {}) {
+      const pending = run(command, args, { ...options, signal: controller.signal, stopGraceMs: 1000 });
+      commands.add(pending);
+      const finished = () => commands.delete(pending);
+      pending.then(finished, finished);
+      return pending;
+    },
+    async close() {
+      controller.abort();
+      await Promise.allSettled([...commands]);
+    },
+  };
+}
+
+module.exports = { unusedPort, startProcess, stopProcess, run, createCommandScope };
