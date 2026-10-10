@@ -20,6 +20,11 @@ npm run typecheck -w @projecthub/api
 DATABASE_URL='postgresql://...' npm run test -w @projecthub/api
 The integration test connects to a real PostgreSQL database, creates uniquely named test users, and deletes its own records. Without DATABASE_URL it is explicitly skipped. Use an isolated test database.
 
+## Project command boundary
+`project-commands.ts` owns create, edit, submit, delete and moderation behavior for an authenticated request identity. It keeps visibility/ownership checks, expected-version checks, upload-reference validation, conditional writes and the moderation/audit transaction together. The controller retains HTTP guards, DTO validation and response shaping. Prisma receives the same version/status predicates and batched moderation transaction.
+
+`project-commands.test.ts` exercises the narrow persistence and file-stat dependencies without constructing a controller. The real-PostgreSQL command test deliberately fails the audit insert and verifies that the project update rolls back; mocked batch promises do not prove transaction atomicity. Run it with the other integration tests through `npm run test:db` from the repository root.
+
 ## Security boundaries and operations
 - Mutating requests must carry an Origin equal to WEB_ORIGIN, including login/signup and image uploads. Same-origin Next.js proxy forwards that browser header.
 - Auth cookies are httpOnly and SameSite=Lax. Public API shapes exclude email and password hashes.

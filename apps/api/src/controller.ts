@@ -2,17 +2,16 @@ import { Body, Controller, Delete, Get, Post, Put, Patch, Param, Query, Req, Res
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { randomBytes } from 'node:crypto';
-import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { normalizeUpload } from './images';
 import { Prisma, ProjectStatus } from '@prisma/client';
 import { Db } from './db';
 import { AuthRequest, AuthGuard, AuthService, userSelect } from './auth';
 import { LoginDto, SignupDto, ProfileDto, ProjectDto, UpdateProjectDto, ProjectVersionDto, ModerationDto, RoleDto } from './dto';
-import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie, sessionTokenId, DUMMY_PASSWORD_HASH } from './security';
+import { digest, hashPassword, verifyPassword, ensureReviewer, ensureVisible, secureCookie, sessionTokenId, DUMMY_PASSWORD_HASH } from './security';
 import { parseProjectQuery } from './project-query';
 import { projectInclude as include, ProjectWithCounts, shapeProjects } from './project-shape';
-import { ensureExpectedVersion, ensureModerationTransition, guardProjectWrite } from './project-state';
+import { ProjectCommands } from './project-commands';
 import { persistUpload, UploadCapacityInterceptor } from './uploads';
 import { createSession, SESSION_LIFETIME_MS } from './sessions';
 import { changeUserRole } from './roles';
@@ -24,7 +23,13 @@ export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
  private readonly uploadLimits=readUploadLimits();
- constructor(private db:Db,private auth:AuthService){}
+ private readonly commands:ProjectCommands;
+ constructor(private db:Db,private auth:AuthService){
+  this.commands=new ProjectCommands({
+   project:db.project,upload:db.upload,audit:db.audit,
+   $transaction:operations=>db.$transaction(operations),
+  },uploadDir);
+ }
  private async session(userId:string,res:Response) {
   const {token}=await createSession(this.db,userId);
   res.cookie('ph_session',token,{httpOnly:true,secure:secureCookie(),sameSite:'lax',path:'/api',maxAge:SESSION_LIFETIME_MS});
@@ -107,60 +112,18 @@ export class ApiController {
   return this.projectPage({status:'APPROVED',bookmarks:{some:{userId:req.user!.id}}},[{createdAt:'desc'},{id:'desc'}],pagination,req.user!.id);
  }
  @Get('projects/:id') async detail(@Param('id') id:string,@Req() req:AuthRequest){return this.shape(await this.project(id,req),req.user?.id);}
- private async validateScreenshots(body:ProjectDto,userId:string) {
-  for(const url of body.screenshots||[]) {
-   if(['/examples/campus-connect.png','/examples/ecotrack.png','/examples/study-space.png'].includes(url)) continue;
-   try {
-    const filename=url.split('/').pop()!;
-    const upload=await this.db.upload.findUnique({where:{filename}});
-    if(!upload||upload.state!=='READY'||upload.ownerId!==userId) throw Error();
-    await stat(resolve(uploadDir,filename));
-   } catch {
-    throw new BadRequestException('Screenshot does not exist');
-   }
-  }
-  for(const value of [body.githubUrl,body.demoUrl]) if(value) {
-   try {
-    const url=new URL(value);
-    if(!['http:','https:'].includes(url.protocol)||url.username||url.password) throw Error();
-   } catch {
-    throw new BadRequestException('Links must be valid HTTP or HTTPS URLs');
-   }
-  }
- }
- @Post('projects') @UseGuards(AuthGuard) async create(@Body() body:ProjectDto,@Req() req:AuthRequest){await this.validateScreenshots(body,req.user!.id);return this.shape(await this.db.project.create({data:{...body,screenshots:body.screenshots||[],ownerId:req.user!.id},include}),req.user!.id);}
+ @Post('projects') @UseGuards(AuthGuard) async create(@Body() body:ProjectDto,@Req() req:AuthRequest){return this.shape(await this.commands.create(body,req.user!),req.user!.id);}
  @Patch('projects/:id') @UseGuards(AuthGuard)
  async update(@Param('id') id:string,@Body() body:UpdateProjectDto,@Req() req:AuthRequest) {
-  const project=await this.project(id,req);
-  ensureOwner(project,req.user!);
-  const {expectedVersion,...changes}=body;
-  ensureExpectedVersion(project,expectedVersion);
-  await this.validateScreenshots(changes,req.user!.id);
-  const updated=await guardProjectWrite(()=>this.db.project.update({
-   where:{id,ownerId:req.user!.id,version:project.version,status:project.status},
-   data:{...changes,status:'DRAFT',feedback:'',version:{increment:1}},include,
-  }));
-  return this.shape(updated,req.user!.id);
+  return this.shape(await this.commands.update(id,body,req.user!),req.user!.id);
  }
  @Delete('projects/:id') @UseGuards(AuthGuard)
  async remove(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ProjectVersionDto) {
-  const project=await this.project(id,req);
-  ensureOwner(project,req.user!);
-  ensureExpectedVersion(project,body.expectedVersion);
-  await guardProjectWrite(()=>this.db.project.delete({where:{id,ownerId:req.user!.id,version:project.version,status:project.status}}));
-  return {ok:true};
+  return this.commands.remove(id,body,req.user!);
  }
  @Post('projects/:id/submit') @UseGuards(AuthGuard)
  async submit(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ProjectVersionDto) {
-  const project=await this.project(id,req);
-  ensureOwner(project,req.user!);
-  ensureExpectedVersion(project,body.expectedVersion);
-  if(!['DRAFT','CHANGES_REQUESTED'].includes(project.status)) throw new BadRequestException('Only drafts or changes-requested projects can be submitted');
-  const updated=await guardProjectWrite(()=>this.db.project.update({
-   where:{id,ownerId:req.user!.id,version:project.version,status:project.status},
-   data:{status:'PENDING',feedback:'',version:{increment:1}},include,
-  }));
-  return this.shape(updated,req.user!.id);
+  return this.shape(await this.commands.submit(id,body,req.user!),req.user!.id);
  }
  @Post('projects/:id/view')
  async view(@Param('id') id:string,@Req() req:AuthRequest,@Res({passthrough:true}) res:Response) {
@@ -240,19 +203,7 @@ export class ApiController {
  }
  @Patch('moderation/projects/:id') @UseGuards(AuthGuard)
  async moderate(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ModerationDto) {
-  ensureReviewer(req.user!);
-  const current=await this.project(id,req);
-  if(current.ownerId===req.user!.id) throw new ForbiddenException('You cannot review your own project');
-  ensureExpectedVersion(current,body.expectedVersion);
-  ensureModerationTransition(current.status,body.status,body.feedback);
-  const [project]=await guardProjectWrite(()=>this.db.$transaction([
-   this.db.project.update({
-    where:{id,version:current.version,status:current.status},
-    data:{status:body.status,feedback:body.feedback||'',version:{increment:1}},include,
-   }),
-   this.db.audit.create({data:{actorId:req.user!.id,action:'MODERATE_PROJECT',targetId:id,details:JSON.stringify(body)}}),
-  ]));
-  return this.shape(project,req.user!.id);
+  return this.shape(await this.commands.moderate(id,body,req.user!),req.user!.id);
  }
  private admin(req:AuthRequest){if(req.user!.role!=='ADMIN')throw new ForbiddenException('Administrator access required');}
  @Get('admin/users') @UseGuards(AuthGuard)
