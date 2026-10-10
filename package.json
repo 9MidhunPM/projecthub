@@ -17,6 +17,7 @@
     "test:unit": "npm test",
     "test:ops": "node scripts/run-tests.cjs ops unit",
     "test:integration": "npm run test:integration -w @projecthub/api",
+    "test:db": "node scripts/with-test-database.cjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:generate": "npm run prisma:generate -w @projecthub/api",
     "db:migrate": "npm run db:migrate -w @projecthub/api",
