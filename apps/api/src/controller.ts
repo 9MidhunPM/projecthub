@@ -15,6 +15,7 @@ import { projectInclude as include, ProjectWithCounts, shapeProjects } from './p
 import { ensureExpectedVersion, ensureModerationTransition, guardProjectWrite } from './project-state';
 import { persistUpload, UploadCapacityInterceptor } from './uploads';
 import { createSession, SESSION_LIFETIME_MS } from './sessions';
+import { changeUserRole } from './roles';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
@@ -157,6 +158,10 @@ export class ApiController {
  }
  private admin(req:AuthRequest){if(req.user!.role!=='ADMIN')throw new ForbiddenException('Administrator access required');}
  @Get('admin/users') @UseGuards(AuthGuard) users(@Req() req:AuthRequest){this.admin(req);return this.db.user.findMany({select:userSelect,orderBy:{createdAt:'desc'},take:500});}
- @Patch('admin/users/:id/role') @UseGuards(AuthGuard) async role(@Param('id') id:string,@Body() body:RoleDto,@Req() req:AuthRequest){this.admin(req);if(id===req.user!.id)throw new BadRequestException('You cannot change your own administrator role');if(!await this.db.user.findUnique({where:{id}}))throw new NotFoundException('User not found');const [user]=await this.db.$transaction([this.db.user.update({where:{id},data:{role:body.role},select:userSelect}),this.db.audit.create({data:{actorId:req.user!.id,action:'CHANGE_ROLE',targetId:id,details:JSON.stringify(body)}})]);return user;}
+ @Patch('admin/users/:id/role') @UseGuards(AuthGuard)
+ role(@Param('id') id:string,@Body() body:RoleDto,@Req() req:AuthRequest) {
+  this.admin(req);
+  return changeUserRole(this.db,req.user!.id,id,body.role);
+ }
  @Get('admin/audit') @UseGuards(AuthGuard) audits(@Req() req:AuthRequest){this.admin(req);return this.db.audit.findMany({orderBy:{createdAt:'desc'},take:200});}
 }
