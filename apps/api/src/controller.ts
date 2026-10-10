@@ -9,21 +9,27 @@ import { Prisma, ProjectStatus } from '@prisma/client';
 import { Db } from './db';
 import { AuthRequest, AuthGuard, AuthService, userSelect } from './auth';
 import { LoginDto, SignupDto, ProfileDto, ProjectDto, ModerationDto, RoleDto } from './dto';
-import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie } from './security';
+import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie, sessionTokenId } from './security';
 import { parseProjectQuery } from './project-query';
 import { projectInclude as include, ProjectWithCounts, shapeProjects } from './project-shape';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
  constructor(private db:Db,private auth:AuthService){}
- private async session(userId:string,res:Response){const token=randomBytes(32).toString('hex');await this.db.session.create({data:{id:digest(token),userId,expiresAt:new Date(Date.now()+7*86400000)}});res.cookie('ph_session',token,{httpOnly:true,secure:secureCookie,sameSite:'lax',path:'/api',maxAge:7*86400000});}
+ private async session(userId:string,res:Response){const token=randomBytes(32).toString('hex');await this.db.session.create({data:{id:digest(token),userId,expiresAt:new Date(Date.now()+7*86400000)}});res.cookie('ph_session',token,{httpOnly:true,secure:secureCookie(),sameSite:'lax',path:'/api',maxAge:7*86400000});}
  private async current(req:AuthRequest){await this.auth.resolve(req);return req.user;}
  private async project(id:string,req:AuthRequest){const p=await this.db.project.findUnique({where:{id},include});if(!p)throw new NotFoundException('Project not found');ensureVisible(p,await this.current(req));return p;}
  private async shape(project:ProjectWithCounts,userId?:string){return (await shapeProjects(this.db,[project],userId))[0];}
  @Get('health') health(){return {ok:true};}
  @Post('auth/signup') async signup(@Body() body:SignupDto,@Res({passthrough:true}) res:Response){const email=body.email.trim().toLowerCase();try{const user=await this.db.user.create({data:{email,name:body.name,department:body.department,semester:body.semester,passwordHash:await hashPassword(body.password)},select:userSelect});await this.session(user.id,res);return user;}catch(e){if(e instanceof Prisma.PrismaClientKnownRequestError && e.code==='P2002')throw new ConflictException('An account with this email already exists');throw e;}}
  @Post('auth/login') async login(@Body() body:LoginDto,@Res({passthrough:true}) res:Response){const user=await this.db.user.findUnique({where:{email:body.email.trim().toLowerCase()}});if(!user || !await verifyPassword(body.password,user.passwordHash))throw new UnauthorizedException('Invalid email or password');await this.session(user.id,res);const {passwordHash,...safe}=user;return safe;}
- @Post('auth/logout') @UseGuards(AuthGuard) async logout(@Req() req:AuthRequest,@Res({passthrough:true}) res:Response){await this.db.session.deleteMany({where:{id:req.sessionId!}});res.clearCookie('ph_session',{path:'/api',httpOnly:true,secure:secureCookie,sameSite:'lax'});return {ok:true};}
+ @Post('auth/logout')
+ async logout(@Req() req:AuthRequest,@Res({passthrough:true}) res:Response) {
+  const id=sessionTokenId(req.cookies?.ph_session);
+  if(id) await this.db.session.deleteMany({where:{id}});
+  res.clearCookie('ph_session',{path:'/api',httpOnly:true,secure:secureCookie(),sameSite:'lax'});
+  return {ok:true};
+ }
  @Get('auth/me') @UseGuards(AuthGuard) me(@Req() req:AuthRequest){const {passwordHash,...safe}=req.user!;return safe;}
  @Patch('profile') @UseGuards(AuthGuard) profile(@Req() req:AuthRequest,@Body() body:ProfileDto){return this.db.user.update({where:{id:req.user!.id},data:body,select:userSelect});}
  @Get('projects')
@@ -44,7 +50,7 @@ export class ApiController {
  @Patch('projects/:id') @UseGuards(AuthGuard) async update(@Param('id') id:string,@Body() body:ProjectDto,@Req() req:AuthRequest){const p=await this.project(id,req);ensureOwner(p,req.user!);await this.validateScreenshots(body,req.user!.id);return this.shape(await this.db.project.update({where:{id},data:{...body,status:'DRAFT',feedback:''},include}),req.user!.id);}
  @Delete('projects/:id') @UseGuards(AuthGuard) async remove(@Param('id') id:string,@Req() req:AuthRequest){ensureOwner(await this.project(id,req),req.user!);await this.db.project.delete({where:{id}});return {ok:true};}
  @Post('projects/:id/submit') @UseGuards(AuthGuard) async submit(@Param('id') id:string,@Req() req:AuthRequest){const p=await this.project(id,req);ensureOwner(p,req.user!);if(!['DRAFT','CHANGES_REQUESTED'].includes(p.status))throw new BadRequestException('Only drafts or changes-requested projects can be submitted');return this.shape(await this.db.project.update({where:{id},data:{status:'PENDING',feedback:''},include}),req.user!.id);}
- @Post('projects/:id/view') async view(@Param('id') id:string,@Req() req:AuthRequest,@Res({passthrough:true}) res:Response){const p=await this.project(id,req);if(p.status!=='APPROVED')return {views:p.views};let visitor=req.cookies?.ph_visitor;if(typeof visitor!=='string'||!/^[a-f0-9]{64}$/.test(visitor)){visitor=randomBytes(32).toString('hex');res.cookie('ph_visitor',visitor,{httpOnly:true,sameSite:'lax',secure:secureCookie,path:'/api',maxAge:365*86400000});}const key={projectId:id,visitor:digest(req.user?.id||visitor),day:new Date().toISOString().slice(0,10)};try{await this.db.$transaction([this.db.viewEvent.create({data:key}),this.db.project.update({where:{id},data:{views:{increment:1}}})]);}catch(e){if(!(e instanceof Prisma.PrismaClientKnownRequestError&&e.code==='P2002'))throw e;}return {views:(await this.db.project.findUniqueOrThrow({where:{id}})).views};}
+ @Post('projects/:id/view') async view(@Param('id') id:string,@Req() req:AuthRequest,@Res({passthrough:true}) res:Response){const p=await this.project(id,req);if(p.status!=='APPROVED')return {views:p.views};let visitor=req.cookies?.ph_visitor;if(typeof visitor!=='string'||!/^[a-f0-9]{64}$/.test(visitor)){visitor=randomBytes(32).toString('hex');res.cookie('ph_visitor',visitor,{httpOnly:true,sameSite:'lax',secure:secureCookie(),path:'/api',maxAge:365*86400000});}const key={projectId:id,visitor:digest(req.user?.id||visitor),day:new Date().toISOString().slice(0,10)};try{await this.db.$transaction([this.db.viewEvent.create({data:key}),this.db.project.update({where:{id},data:{views:{increment:1}}})]);}catch(e){if(!(e instanceof Prisma.PrismaClientKnownRequestError&&e.code==='P2002'))throw e;}return {views:(await this.db.project.findUniqueOrThrow({where:{id}})).views};}
  private async toggle(id:string,req:AuthRequest,kind:'like'|'bookmark',on:boolean){const p=await this.project(id,req);if(p.status!=='APPROVED')throw new BadRequestException('Project must be approved');const key={userId:req.user!.id,projectId:id};if(kind==='like'){if(on)await this.db.like.upsert({where:{userId_projectId:key},create:key,update:{}});else await this.db.like.deleteMany({where:key});}else{if(on)await this.db.bookmark.upsert({where:{userId_projectId:key},create:key,update:{}});else await this.db.bookmark.deleteMany({where:key});}const shaped=await this.shape(await this.db.project.findUniqueOrThrow({where:{id},include}),req.user!.id);return {liked:shaped.liked,bookmarked:shaped.bookmarked,likes:shaped.likes};}
  @Put('projects/:id/like') @UseGuards(AuthGuard) like(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'like',true);}
  @Delete('projects/:id/like') @UseGuards(AuthGuard) unlike(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'like',false);}

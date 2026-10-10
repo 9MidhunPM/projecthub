@@ -9,4 +9,13 @@ export function ensureOwner(project:{ownerId:string}, user:{id:string}) { if(pro
 export function ensureReviewer(user:{role:string}) { if(!['FACULTY','ADMIN'].includes(user.role)) throw new ForbiddenException('Reviewer access required'); }
 export function ensureVisible(project:{status:string;ownerId:string}, user?:{id:string;role:string}|null) { if(project.status!=='APPROVED' && project.ownerId!==user?.id && !['FACULTY','ADMIN'].includes(user?.role||'')) throw new NotFoundException('Project not found'); }
 
-export const secureCookie = process.env.NODE_ENV === 'production' && !(process.env.COOKIE_SECURE === 'false' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(process.env.WEB_ORIGIN || ''));
+export function sessionTokenId(token: unknown): string | undefined {
+ if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return undefined;
+ return digest(token);
+}
+
+export function secureCookie(environment: NodeJS.ProcessEnv = process.env): boolean {
+ if (environment.COOKIE_SECURE === 'true') return true;
+ const localHttp = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(environment.WEB_ORIGIN || '');
+ return environment.NODE_ENV === 'production' && !(environment.COOKIE_SECURE === 'false' && localHttp);
+}

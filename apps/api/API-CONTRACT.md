@@ -2,6 +2,7 @@
 Base `/api`, JSON, browser credentials included. Cookies are httpOnly; mutations require Origin matching WEB_ORIGIN (default http://localhost:3000). Error shape `{statusCode,message}`.
 Optional request fields may be omitted but cannot be `null`. Human-readable text, email, URLs, and individual technology/team names are trimmed before validation; passwords are preserved exactly. Empty strings clear optional text fields, and an empty screenshot array clears screenshots.
 - POST /auth/signup {name,email,password,department,semester}; POST /auth/login {email,password}; POST /auth/logout; GET /auth/me -> user object (401 logged out).
+  Logout is idempotent and clears the session cookie even when the session is missing, expired, or already revoked. `COOKIE_SECURE=true` enables secure cookies in every environment; production defaults to secure cookies.
 - PATCH /profile {name?,department?,semester?,bio?} -> user.
 - GET /projects?q=&department=&semester=&type=&tech=&page=1&limit=12&sort=recent|popular -> {items,total,page,limit,pages}. Approved only.
   Query values must be single strings (repeated/structured values return 400). Page is an integer 1–10000; limit is 1–48; semester is 1–12. Out-of-range or malformed numbers and unknown sort values return 400. Search is at most 200 characters, department 80, type 60, technology 40. Empty text filters are ignored. Recent/popular sorts have deterministic timestamp/ID tie-breakers.

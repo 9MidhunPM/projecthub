@@ -59,6 +59,8 @@ test('real PostgreSQL: signup, ownership, moderation, idempotency and origin pro
  for(let i=0;i<2;i++)assert.equal((await request('/projects/'+id+'/bookmark','PUT',{},b.cookie)).data.bookmarked,true);
  assert.equal((await request('/projects/'+id,'PATCH',body,a.cookie)).data.status,'DRAFT');assert.equal((await request('/projects/'+id)).status,404);
  assert.equal((await request('/auth/logout','POST',{},a.cookie)).status,201);assert.equal((await request('/auth/me','GET',undefined,a.cookie)).status,401);
+ assert.equal((await request('/auth/logout','POST',{},a.cookie)).status,201);
+ assert.equal((await request('/auth/logout','POST',{})).cookie,'ph_session=');
  }finally{
   try {
    await app?.close();
