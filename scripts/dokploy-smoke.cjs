@@ -13,6 +13,11 @@ const services = ['api', 'db', 'migrate', 'secrets-init', 'web'];
 const volumes = ['db_credentials', 'postgres_data', 'uploads'];
 const projectLabel = 'com.docker.compose.project';
 const token = 'PROJECTHUB_RECIPE_OK\n';
+const stages = ['normalize-config', 'validate-config', 'check-empty-container', 'check-empty-volume', 'check-empty-network', 'build-and-start', 'fresh-authentication', 'restart-preservation', 'stopped-fixture-refusal'];
+function reportStage(stage, log = console.log) {
+  assert(stages.includes(stage), 'Unknown recipe stage.');
+  log('Recipe stage:', stage);
+}
 const mounts = {
   'secrets-init': [['db_credentials', '/run/projecthub-secrets', false], ['postgres_data', '/var/lib/projecthub-db', true]],
   db: [['postgres_data', '/var/lib/postgresql/data', false], ['db_credentials', '/run/projecthub-secrets', true]],
@@ -56,7 +61,10 @@ function validateConfig(config, project) {
   assert.deepEqual(Object.keys(config.networks), ['default']);
   const network = config.networks.default;
   assert.equal(network.name, `${project}_default`);
-  assert(!network.external && !network.driver && !network.driver_opts && !network.ipam && !network.labels);
+  assert(!network.external && !network.driver && !network.driver_opts && !network.labels);
+  // Compose 2.38.2 serializes its zero-value IPAM struct as {}. Accept only that
+  // default representation, never a custom driver, pool, subnet or other option.
+  if (network.ipam !== undefined) assert.deepEqual(network.ipam, {});
   const environments = {
     'secrets-init': {}, migrate: {},
     db: { POSTGRES_USER: 'projecthub', POSTGRES_PASSWORD_FILE: '/run/projecthub-secrets/postgres-password', POSTGRES_HOST_AUTH_METHOD: 'scram-sha-256', POSTGRES_DB: 'projecthub' },
@@ -273,11 +281,17 @@ async function main() {
   const inspect = (kind, options = {}) => inventory(kind, project, command, options);
   let mayClean = false;
   try {
-    validateConfig(JSON.parse(await run([...compose, 'config', '--format', 'json'], { capture: true })), project);
-    for (const kind of ['container', 'volume', 'network']) assert.equal((await inspect(kind, { signal: controller.signal })).length, 0);
+    reportStage('normalize-config');
+    const config = JSON.parse(await run([...compose, 'config', '--format', 'json'], { capture: true }));
+    reportStage('validate-config');
+    validateConfig(config, project);
+    for (const kind of ['container', 'volume', 'network']) {
+      reportStage(`check-empty-${kind}`);
+      assert.equal((await inspect(kind, { signal: controller.signal })).length, 0);
+    }
     mayClean = true;
     console.log('Starting isolated, port-free recipe verification. Runtime logs are suppressed.');
-    await exerciseRecipe(compose, project, run, () => inspect('container', { signal: controller.signal }), stage => console.log('Recipe stage:', stage));
+    await exerciseRecipe(compose, project, run, () => inspect('container', { signal: controller.signal }), reportStage);
     console.log('Recipe checks passed: initialization, authentication, privilege drop, preservation, and missing-secret refusal.');
   } catch {
     console.error('Recipe verification failed. Raw runtime diagnostics are intentionally unavailable.');
@@ -304,4 +318,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(() => { console.error('Recipe verification or scoped cleanup failed.'); process.exitCode = 1; });
-module.exports = { projectName, createDockerHome, dockerEnvironment, validateConfig, validateOwned, validateRuntime, safeDiagnostics, dockerCommand, inventory, exerciseRecipe, cleanup, containerFormat };
+module.exports = { projectName, createDockerHome, dockerEnvironment, validateConfig, validateOwned, validateRuntime, safeDiagnostics, reportStage, dockerCommand, inventory, exerciseRecipe, cleanup, containerFormat };

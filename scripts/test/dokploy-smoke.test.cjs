@@ -101,6 +101,34 @@ test('resolved recipe rejects publishing, external resources, unsafe builds and 
   for (const change of changes) { const config = configured(); change(config); assert.throws(() => smoke.validateConfig(config, project)); }
 });
 
+test('official Compose 2.38.2 JSON accepts empty default IPAM but no configured IPAM options', () => {
+  // Captured using the official v2.38.2 linux-x86_64 release, verified SHA-256:
+  // 486b3ffc0f806ca2efbc430cef89955386011662f0c76bad17c103d059cfa9cf
+  // config --format json needs no daemon. Only absolute build.context is replaced.
+  const config = structuredClone(require('./fixtures/dokploy-compose-2.38.2.json'));
+  for (const service of Object.values(config.services)) if (service.build) {
+    assert.equal(service.build.context, '__REPOSITORY_ROOT__');
+    service.build.context = root;
+  }
+  assert.deepEqual(config.networks.default.ipam, {});
+  smoke.validateConfig(config, project);
+  delete config.networks.default.ipam;
+  smoke.validateConfig(config, project);
+  for (const ipam of [null, [], false, { driver: 'default' }, { config: [] }, { config: [{ subnet: '10.20.0.0/16' }] }, { unexpected: true }]) {
+    config.networks.default.ipam = ipam;
+    assert.throws(() => smoke.validateConfig(config, project));
+  }
+});
+
+test('preflight stage diagnostics accept only fixed labels and never serialize unknown input', () => {
+  const output = [];
+  for (const stage of ['normalize-config', 'validate-config', 'check-empty-container', 'check-empty-volume', 'check-empty-network']) smoke.reportStage(stage, (...args) => output.push(args));
+  assert.deepEqual(output.map(args => args[0]), Array(5).fill('Recipe stage:'));
+  for (const stage of ['private-value', { secret: 'private-value' }, undefined]) assert.throws(() => smoke.reportStage(stage, (...args) => output.push(args)));
+  assert.equal(output.length, 5);
+  assert(!JSON.stringify(output).includes('private-value'));
+});
+
 test('runtime requires successful initialization/migration, readonly credentials and zero host bindings', () => {
   smoke.validateRuntime(containers(), project);
   smoke.validateRuntime(containers(true), project, true);
