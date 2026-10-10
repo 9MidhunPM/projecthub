@@ -36,7 +36,10 @@ function main() {
   if (!files.length) throw new Error(`No ${suite} tests found in ${workspace}.`);
   const child = spawnSync(process.execPath, ['--import', 'tsx', '--test', ...options, ...files], {
     cwd: root,
-    env: testEnvironment(suite),
+    env: {
+      ...testEnvironment(suite),
+      ...(workspace === 'web' ? { TSX_TSCONFIG_PATH: resolve(root, 'apps/web/tsconfig.test.json') } : {}),
+    },
     stdio: 'inherit',
   });
   if (child.error) throw new Error('Unable to start the test runner.');
