@@ -10,7 +10,7 @@ type Context = {
   user: User | null;
   loading: boolean;
   sessionError: string;
-  refresh: () => Promise<void>;
+  refresh: (signal?: AbortSignal) => Promise<void>;
   notify: (text: string) => void;
 };
 
@@ -34,13 +34,20 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   const path = usePathname();
   const router = useRouter();
 
-  const refresh = useCallback(async () => {
-    if (!mounted.current || logoutPending.current) return;
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    if (!mounted.current || logoutPending.current || signal?.aborted) return;
     sessionRequest.current?.abort();
     const controller = new AbortController();
     const generation = ++sessionGeneration.current;
     sessionRequest.current = controller;
-    const current = () => mounted.current && sessionGeneration.current === generation && !controller.signal.aborted;
+    const ownsLookup = () => mounted.current && sessionGeneration.current === generation;
+    const current = () => ownsLookup() && !controller.signal.aborted;
+    const cancel = () => {
+      controller.abort();
+      // UI cancellation does not undo an authentication operation on the server.
+      if (ownsLookup()) { sessionRequest.current = null; setLoading(false); }
+    };
+    signal?.addEventListener('abort', cancel, {once: true});
     setLoading(true);
     setSessionError('');
     try {
@@ -54,7 +61,8 @@ export function AppProvider({children}: {children: React.ReactNode}) {
         setSessionError((failure as Error).message);
       }
     } finally {
-      if (current()) { sessionRequest.current = null; setLoading(false); }
+      signal?.removeEventListener('abort', cancel);
+      if (ownsLookup()) { sessionRequest.current = null; setLoading(false); }
     }
   }, []);
 

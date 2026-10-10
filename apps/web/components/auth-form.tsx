@@ -4,7 +4,7 @@ import {useEffect, useRef, useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {ArrowRight, Box, Eye, EyeOff} from 'lucide-react';
-import {api, departments} from '@/lib/api';
+import {api, departments, isAbortError} from '@/lib/api';
 import {authHref, safeReturnPath} from '@/lib/auth-navigation';
 import {useApp, ErrorMessage} from './shell';
 
@@ -13,41 +13,55 @@ export function AuthForm({signup = false}: {signup?: boolean}) {
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [next, setNext] = useState('/workspace');
-  const pending = useRef(false);
+  const request = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
   const errorSummary = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const {refresh} = useApp();
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; request.current?.abort(); request.current = null; };
+  }, []);
   useEffect(() => { setNext(safeReturnPath(new URLSearchParams(window.location.search).get('next'))); }, []);
   useEffect(() => { if (error) errorSummary.current?.focus(); }, [error]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending.current) return;
+    if (request.current) return;
     const values = Object.fromEntries(new FormData(event.currentTarget));
     if (signup && String(values.name).trim().length < 2) {
       setError('Enter your full name using at least 2 characters.');
       return;
     }
-    pending.current = true;
+    const controller = new AbortController();
+    request.current = controller;
+    const source = `${window.location.pathname}${window.location.search}`;
+    const destination = safeReturnPath(new URLSearchParams(window.location.search).get('next'));
+    const current = () => mounted.current && request.current === controller && !controller.signal.aborted
+      && `${window.location.pathname}${window.location.search}` === source;
     setBusy(true);
     setError('');
     try {
       await api(`/auth/${signup ? 'signup' : 'login'}`, {
         method: 'POST',
+        signal: controller.signal,
         body: JSON.stringify({
           ...values,
           email: String(values.email).trim(),
           ...(signup ? {name: String(values.name).trim(), semester: Number(values.semester)} : {}),
         }),
       });
-      await refresh();
-      router.replace(safeReturnPath(new URLSearchParams(window.location.search).get('next')));
+      if (!current()) return;
+      await refresh(controller.signal);
+      if (current()) router.replace(destination);
     } catch (failure) {
-      setError((failure as Error).message);
+      if (current() && !isAbortError(failure)) setError((failure as Error).message);
     } finally {
-      pending.current = false;
-      setBusy(false);
+      if (request.current === controller) {
+        request.current = null;
+        if (mounted.current) setBusy(false);
+      }
     }
   }
 
