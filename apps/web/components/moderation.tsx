@@ -3,8 +3,10 @@
 import {useEffect, useRef, useState} from 'react';
 import Link from 'next/link';
 import {Check, MessageSquare, EyeOff, ArrowUpRight, ShieldCheck} from 'lucide-react';
-import {api, ApiError, isAbortError, Project, ProjectStatus} from '@/lib/api';
+import {api, ApiError, isAbortError, Listing, Project, ProjectStatus} from '@/lib/api';
 import {useApiResource} from '@/lib/use-api-resource';
+import {useCollectionQuery} from '@/lib/use-collection-query';
+import {Pagination} from './pagination';
 import {Guard, Loading, ErrorMessage, useApp} from './shell';
 import {Status} from './workspace';
 
@@ -17,11 +19,18 @@ const queues: {value: ReviewStatus; label: string; empty: string}[] = [
   {value: 'HIDDEN', label: 'Hidden', empty: 'No hidden projects in this queue.'},
 ];
 
+const reviewQueryOptions = {statuses: queues.map(queue => queue.value), defaultStatus: 'PENDING'};
+
 export function Moderation() { return <Guard roles={['FACULTY', 'ADMIN']}><ReviewQueue/></Guard>; }
 
 function ReviewQueue() {
-  const [status, setStatus] = useState<ReviewStatus>('PENDING');
-  const {data: projects, error, loading, reload, setData} = useApiResource<Project[]>(`/moderation/projects?status=${status}`);
+  const {query, ready, change} = useCollectionQuery('/moderation', reviewQueryOptions);
+  const status = query.status as ReviewStatus;
+  const {data, error, loading, reload, setData} = useApiResource<Listing>(ready ? `/moderation/projects?status=${status}&page=${query.page}&limit=12` : null);
+  const projects = data?.items ?? null;
+  useEffect(() => {
+    if (data && !loading && !error && query.page > Math.max(1, data.pages)) change({page: Math.max(1, data.pages)}, 'replace');
+  }, [data, loading, error, query.page, change]);
   const [busy, setBusy] = useState<{id: string; decision: Decision} | null>(null);
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [itemErrors, setItemErrors] = useState<Record<string, {message: string; conflict: boolean}>>({});
@@ -47,7 +56,8 @@ function ReviewQueue() {
     try {
       await api(`/moderation/projects/${project.id}`, {method: 'PATCH', body: JSON.stringify({status: decision, feedback: text || '', expectedVersion: project.version}), signal: controller.signal});
       if (controller.signal.aborted) return;
-      setData(previous => previous?.filter(item => item.id !== project.id) ?? null);
+      setData(previous => previous ? {...previous, items: previous.items.filter(item => item.id !== project.id)} : previous);
+      reload();
       setFeedback(previous => { const next = {...previous}; delete next[project.id]; return next; });
       notify(decision === 'APPROVED' ? 'Project approved and published.' : decision === 'HIDDEN' ? 'Project hidden from Explore.' : 'Changes requested.');
     } catch (failure) {
@@ -61,11 +71,11 @@ function ReviewQueue() {
 
   return <div className="page-container">
     <div className="page-title"><div><h1>Give good work a green light.</h1><p>Review student projects and help their ideas shine.</p></div><ShieldCheck size={32} aria-hidden="true"/></div>
-    <nav className="tab-bar review-tabs" aria-label="Review queues">{queues.map(queue => <button key={queue.value} className={status === queue.value ? 'active' : ''} aria-pressed={status === queue.value} disabled={Boolean(busy)} onClick={() => setStatus(queue.value)}>{queue.label}</button>)}</nav>
+    <nav className="tab-bar review-tabs" aria-label="Review queues">{queues.map(queue => <button key={queue.value} className={status === queue.value ? 'active' : ''} aria-pressed={status === queue.value} disabled={Boolean(busy)} onClick={() => change({status: queue.value, page: 1})}>{queue.label}</button>)}</nav>
     <ErrorMessage message={error}/>
     {error && <button className="button" disabled={Boolean(busy)} onClick={reload}>Try again</button>}
-    {!projects && loading ? <Loading message="Loading review queue…"/> : projects?.length ? <>
-      <p className="collection-count" role="status">{projects.length} {projects.length === 1 ? 'project' : 'projects'} in this queue</p>
+    {(!projects && loading) || (data && query.page > Math.max(1, data.pages)) ? <Loading message="Loading review queue…"/> : projects?.length ? <>
+      <p className="collection-count" role="status">{data?.total} {data?.total === 1 ? 'project' : 'projects'} in this queue</p>
       <div className="review-list" aria-busy={loading}>{projects.map(project => {
         const ownsProject = project.ownerId === user?.id;
         const itemError = itemErrors[project.id];
@@ -83,6 +93,7 @@ function ReviewQueue() {
           </>}
         </article>;
       })}</div>
-    </> : !error && !loading && <div className="empty"><ShieldCheck size={40} aria-hidden="true"/><h2>{queues.find(queue => queue.value === status)?.empty}</h2><p>{status === 'PENDING' ? 'New student submissions will appear here.' : 'Choose another queue to continue reviewing.'}</p></div>}
+      {data && <Pagination data={data} busy={loading || Boolean(busy) || Boolean(error)} label="Review" onPage={page => change({page})}/>}
+    </> : loading ? <Loading message="Refreshing review queue…"/> : !error && <div className="empty"><ShieldCheck size={40} aria-hidden="true"/><h2>{queues.find(queue => queue.value === status)?.empty}</h2><p>{status === 'PENDING' ? 'New student submissions will appear here.' : 'Choose another queue to continue reviewing.'}</p></div>}
   </div>;
 }
