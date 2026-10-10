@@ -189,8 +189,14 @@ test('orchestration stops services before damage and requires an executed refusa
     if (args.includes('stop')) stopped = true;
     if (options.capture) return token;
     return '';
-  }, async () => containers(stopped), phase => phases.push(phase));
-  assert.deepEqual(phases, ['build-and-start', 'fresh-authentication', 'restart-preservation', 'stopped-fixture-refusal']);
+  }, async () => containers(stopped), phase => { smoke.reportStage(phase, () => {}); phases.push(phase); });
+  assert.deepEqual(phases, [
+    'build-and-start', 'fresh-authentication', 'probe-db-privileges', 'probe-secrets-init-capture',
+    'probe-migrate-auth', 'probe-api-auth', 'probe-web-http', 'restart-preservation',
+    'probe-secrets-init-preserved', 'probe-api-auth', 'probe-web-http', 'probe-secrets-init-preserved',
+    'stopped-fixture-refusal', 'probe-secrets-init-withhold', 'probe-secrets-init-missing',
+    'probe-secrets-init-refusal', 'probe-secrets-init-missing',
+  ]);
   const stop = calls.findIndex(call => call.args.includes('stop'));
   const withheld = calls.findIndex(call => call.args.some(arg => arg.includes('})("withhold")')));
   assert(withheld > stop);

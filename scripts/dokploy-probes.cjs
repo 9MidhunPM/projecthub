@@ -91,7 +91,9 @@ async function verifyRecipeProbe(operation) {
     assert.equal(rows[0].database, 'projecthub');
     const migrations = await good.$queryRawUnsafe('SELECT count(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL');
     assert(migrations[0].count > 0);
-    await assert.rejects(bad.$queryRawUnsafe('SELECT 1'), error => (error.code || error.errorCode) === 'P1000');
+    // Prisma 6.19's first-query wrapper drops the initialization error code.
+    // Explicit connection preserves P1000, so unrelated failures cannot pass.
+    await assert.rejects(bad.$connect(), error => (error.code || error.errorCode) === 'P1000');
     await good.$queryRawUnsafe('SELECT 1');
   } finally { await Promise.all([good.$disconnect(), bad.$disconnect()]); }
 }

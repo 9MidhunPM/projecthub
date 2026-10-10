@@ -13,7 +13,12 @@ const services = ['api', 'db', 'migrate', 'secrets-init', 'web'];
 const volumes = ['db_credentials', 'postgres_data', 'uploads'];
 const projectLabel = 'com.docker.compose.project';
 const token = 'PROJECTHUB_RECIPE_OK\n';
-const stages = ['normalize-config', 'validate-config', 'check-empty-container', 'check-empty-volume', 'check-empty-network', 'build-and-start', 'fresh-authentication', 'restart-preservation', 'stopped-fixture-refusal'];
+const stages = [
+  'normalize-config', 'validate-config', 'check-empty-container', 'check-empty-volume', 'check-empty-network',
+  'build-and-start', 'fresh-authentication', 'restart-preservation', 'stopped-fixture-refusal',
+  'probe-db-privileges', 'probe-secrets-init-capture', 'probe-migrate-auth', 'probe-api-auth', 'probe-web-http',
+  'probe-secrets-init-preserved', 'probe-secrets-init-withhold', 'probe-secrets-init-missing', 'probe-secrets-init-refusal',
+];
 function reportStage(stage, log = console.log) {
   assert(stages.includes(stage), 'Unknown recipe stage.');
   log('Recipe stage:', stage);
@@ -226,6 +231,7 @@ async function inventory(kind, project, command, options = {}) {
 
 async function exerciseRecipe(compose, project, run, inspect, onStage = () => {}) {
   const probe = async (service, operation, oneOff = false) => {
+    onStage(`probe-${service}-${operation}`);
     const prefix = oneOff ? [...compose, 'run', '--rm', '--no-deps', '-T', ...(service === 'secrets-init' ? ['--entrypoint', 'node'] : []), service] : [...compose, 'exec', '-T', service];
     const executable = oneOff && service === 'secrets-init' ? [] : service === 'api' ? ['node', '/app/docker/with-db-secret.cjs', 'node'] : ['node'];
     assert.equal(await run([...prefix, ...executable, '-e', recipeProbeSource(operation)], { capture: true }), token);
@@ -235,6 +241,7 @@ async function exerciseRecipe(compose, project, run, inspect, onStage = () => {}
   await run([...compose, 'up', '--detach', '--wait', '--wait-timeout', '180'], { timeoutMs: 200000 });
   validateRuntime(await inspect(), project);
   onStage('fresh-authentication');
+  onStage('probe-db-privileges');
   assert.equal(await run([...compose, 'exec', '-T', 'db', 'sh', '-c', 'test "$(cat /proc/1/comm)" = postgres && test "$(id -u postgres)" != 0 && awk -v expected="$(id -u postgres)" \'/^Uid:/{found=1; for(i=2;i<=5;i++) if($i!=expected) exit 1} END{if(!found) exit 1}\' /proc/1/status && printf "PROJECTHUB_RECIPE_OK\\n"'], { capture: true }), token);
   await probe('secrets-init', 'capture', true);
   await probe('migrate', 'auth', true);

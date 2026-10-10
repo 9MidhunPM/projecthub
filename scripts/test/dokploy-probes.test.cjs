@@ -66,12 +66,20 @@ function fixture() {
           return dependency => {
             assert.equal(dependency, '@prisma/client');
             return { PrismaClient: class {
-              constructor(config) { this.url = new URL(config.datasources.db.url); this.disconnected = false; clients.push(this); assert.equal(config.log.length, 0); }
+              constructor(config) { this.url = new URL(config.datasources.db.url); this.disconnected = false; this.connections = 0; this.queries = 0; clients.push(this); assert.equal(config.log.length, 0); }
+              async $connect() {
+                this.connections++;
+                processFixture.stdout.write(value); processFixture.stderr.write(value);
+                if (this.url.password !== value && !options.acceptWrongPassword) throw Object.assign(new Error(value), options.authCodeField === 'code' ? { code: options.authError || 'P1000' } : { errorCode: options.authError || 'P1000' });
+              }
               async $queryRawUnsafe(sql) {
+                this.queries++;
                 calls.push(sql);
                 // A dependency attempting to log private error context is muted.
                 processFixture.stdout.write(value); processFixture.stderr.write(value);
-                if (this.url.password !== value && !options.acceptWrongPassword) throw Object.assign(new Error(value), options.authCodeField === 'code' ? { code: options.authError || 'P1000' } : { errorCode: options.authError || 'P1000' });
+                // Observed with Prisma 6.19.3 / PostgreSQL 17: first-query
+                // initialization errors lose both code and errorCode fields.
+                if (this.url.password !== value && !options.acceptWrongPassword) throw new Error(value);
                 if (sql.includes('current_user')) return [{ role: 'projecthub', database: 'projecthub' }];
                 if (sql.includes('_prisma_migrations')) return [{ count: options.noMigrations ? 0 : 4 }];
                 return [{ '?column?': 1 }];
@@ -146,9 +154,11 @@ test('authentication proves wrapper/file equality, migrated TCP access and speci
   for (const authCodeField of ['code', 'errorCode']) {
     const f = fixture(); const result = await f.run('auth', { authCodeField }); success(result);
     assert.equal(result.clients.length, 2); assert(result.clients.every(client => client.disconnected));
+    assert.equal(result.clients[1].connections, 1);
+    assert.equal(result.clients[1].queries, 0);
     assert(f.calls.some(sql => sql.includes('_prisma_migrations')));
   }
-  for (const options of [{ acceptWrongPassword: true }, { authError: 'P1001' }, { noMigrations: true }, { uid: 0 }, { url: `postgresql://projecthub:${value}@foreign:5432/projecthub` }, { url: 'postgresql://projecthub:different@db:5432/projecthub' }]) {
+  for (const options of [{ acceptWrongPassword: true }, { authError: 'P1001' }, { authError: 'P2010' }, { authError: 'unknown' }, { noMigrations: true }, { uid: 0 }, { url: `postgresql://projecthub:${value}@foreign:5432/projecthub` }, { url: 'postgresql://projecthub:different@db:5432/projecthub' }]) {
     const result = await fixture().run('auth', options); failure(result); assert(result.clients.every(client => client.disconnected));
   }
 });
