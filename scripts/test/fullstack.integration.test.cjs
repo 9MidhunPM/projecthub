@@ -213,6 +213,7 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
     assert.equal(created.status, 201);
     project = created.data;
     assert.equal(project.status, 'DRAFT');
+    assert(Number.isSafeInteger(project.version) && project.version >= 0);
     assert.equal((await anonymous.request(`/api/projects/${project.id}`)).status, 404);
     assert.equal((await anonymous.request(screenshot)).status, 404);
     assert.equal((await other.request(screenshot)).status, 404);
@@ -221,24 +222,38 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
     assert.match(privateImage.headers.get('content-type'), /image\/webp/);
     assert.match(privateImage.headers.get('cache-control'), /no-store/);
     assert.equal((await sharp(privateImage.data).metadata()).format, 'webp');
-    assert.equal((await other.request(`/api/projects/${project.id}`, { method: 'PATCH', body: projectBody })).status, 404);
+    assert.equal((await other.request(`/api/projects/${project.id}`, { method: 'PATCH', body: { ...projectBody, expectedVersion: project.version } })).status, 404);
     assert.equal((await other.request('/api/projects', { method: 'POST', body: { ...projectBody, screenshots: [screenshot] } })).status, 400);
   });
 
   await t.test('feedback, resubmission, and approval publish the project and its image', async () => {
-    assert.equal((await owner.request(`/api/projects/${project.id}/submit`, { method: 'POST', body: {} })).data.status, 'PENDING');
-    assert.equal((await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'CHANGES_REQUESTED' } })).status, 400);
+    project = (await owner.request(`/api/projects/${project.id}/submit`, { method: 'POST', body: { expectedVersion: project.version } })).data;
+    assert.equal(project.status, 'PENDING');
+    assert.equal((await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'CHANGES_REQUESTED', expectedVersion: project.version } })).status, 400);
     const feedback = 'Please expand the accessibility testing details.';
-    assert.equal((await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'CHANGES_REQUESTED', feedback } })).data.feedback, feedback);
+    project = (await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'CHANGES_REQUESTED', feedback, expectedVersion: project.version } })).data;
+    assert.equal(project.feedback, feedback);
     assert.equal((await owner.request(`/api/projects/${project.id}`)).data.feedback, feedback);
-    assert.equal((await owner.request(`/api/projects/${project.id}/submit`, { method: 'POST', body: {} })).data.status, 'PENDING');
-    assert.equal((await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'APPROVED' } })).data.status, 'APPROVED');
+    project = (await owner.request(`/api/projects/${project.id}/submit`, { method: 'POST', body: { expectedVersion: project.version } })).data;
+    assert.equal(project.status, 'PENDING');
+    project = (await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'APPROVED', expectedVersion: project.version } })).data;
+    assert.equal(project.status, 'APPROVED');
     const publicProject = await anonymous.request(`/api/projects/${project.id}`);
     assert.equal(publicProject.status, 200);
     assert.equal(publicProject.data.owner.email, undefined);
     assert.equal((await anonymous.request(screenshot, { raw: true })).status, 200);
     assert.equal((await anonymous.request(`/projects/${project.id}`)).status, 200);
     assert.equal((await owner.request(`/projects/${project.id}/edit`)).status, 200);
+  });
+
+  await t.test('missing and stale editor versions cannot overwrite a published project', async () => {
+    assert.equal((await owner.request(`/api/projects/${project.id}`, { method: 'PATCH', body: projectBody })).status, 400);
+    assert.equal((await owner.request(`/api/projects/${project.id}`, { method: 'PATCH', body: { ...projectBody, title: 'Stale overwrite', expectedVersion: project.version - 1 } })).status, 409);
+    const current = await anonymous.request(`/api/projects/${project.id}`);
+    assert.equal(current.status, 200);
+    assert.equal(current.data.title, projectBody.title);
+    assert.equal(current.data.version, project.version);
+    assert.equal(current.data.status, 'APPROVED');
   });
 
   await t.test('gallery search and combined filters match approved records', async () => {
@@ -276,10 +291,20 @@ test('production Next proxy and real PostgreSQL preserve end-to-end workflows', 
   });
 
   await t.test('hiding a project revokes public detail, listing, and image access', async () => {
-    assert.equal((await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'HIDDEN', feedback: 'Hidden by regression test.' } })).data.status, 'HIDDEN');
+    project = (await faculty.request(`/api/moderation/projects/${project.id}`, { method: 'PATCH', body: { status: 'HIDDEN', feedback: 'Hidden by regression test.', expectedVersion: project.version } })).data;
+    assert.equal(project.status, 'HIDDEN');
     assert.equal((await anonymous.request(`/api/projects/${project.id}`)).status, 404);
     assert.equal((await anonymous.request(`/api/projects?q=${nonce}`)).data.total, 0);
     assert.equal((await anonymous.request(screenshot)).status, 404);
+  });
+
+  await t.test('project deletion requires the current version and preserves stale-delete safety', async () => {
+    assert.equal((await owner.request(`/api/projects/${project.id}`, { method: 'DELETE', body: { expectedVersion: project.version - 1 } })).status, 409);
+    assert.equal((await owner.request(`/api/projects/${project.id}`)).status, 200);
+    const removed = await owner.request(`/api/projects/${project.id}`, { method: 'DELETE', body: { expectedVersion: project.version } });
+    assert.equal(removed.status, 200);
+    assert.equal(removed.data.ok, true);
+    assert.equal((await owner.request(`/api/projects/${project.id}`)).status, 404);
   });
 
   await t.test('profile edits persist and logout revokes the original session', async () => {
