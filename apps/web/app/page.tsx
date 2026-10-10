@@ -25,12 +25,15 @@ export default function Explore() {
 
   useEffect(() => {
     const restore = () => {
+      // A popstate can reach this listener before Next unmounts the gallery.
+      // Never canonicalize another route into an Explore URL.
+      if (window.location.pathname !== '/') { setReady(false); return; }
+      setReady(true);
       const restored = parseGalleryQuery(window.location.search);
       setQuery(restored);
       window.history.replaceState(window.history.state, '', galleryHref(restored));
     };
     restore();
-    setReady(true);
     window.addEventListener('popstate', restore);
     return () => window.removeEventListener('popstate', restore);
   }, []);
@@ -41,6 +44,7 @@ export default function Explore() {
     setLoading(true);
     setError('');
     const timer = window.setTimeout(async () => {
+      if (window.location.pathname !== '/') return;
       const href = search ? `/?${search}` : '/';
       if (`${window.location.pathname}${window.location.search}` !== href) {
         window.history.pushState(window.history.state, '', href);

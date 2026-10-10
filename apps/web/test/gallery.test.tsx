@@ -62,3 +62,27 @@ test('late search responses cannot replace newer results', async () => {
   await act(async () => first.resolve(Response.json({items: [{...project, title: 'Old result'}], total: 1, page: 1, limit: 6, pages: 1})));
   assert.equal(view.queryByRole('article', {name: 'Old result'}), null);
 });
+
+
+test('gallery popstate handling never rewrites another route before unmount', async () => {
+  galleryFetch(async () => Response.json(empty));
+  const view = renderApp(<Explore/>);
+  await waitFor(() => assert.ok(view.getByRole('link', {name: 'Share the first project'})));
+  for (const destination of ['/login?next=%2Fprojects%2Fnew', '/projects/project-1']) {
+    window.history.pushState({}, '', destination);
+    fireEvent.popState(window);
+    assert.equal(`${window.location.pathname}${window.location.search}`, destination);
+  }
+});
+
+test('a debounced gallery search cannot replace the URL after route navigation', async () => {
+  let calls = 0;
+  galleryFetch(async () => { calls += 1; return Response.json(empty); });
+  const view = renderApp(<Explore/>);
+  await waitFor(() => assert.equal(calls, 1));
+  fireEvent.change(view.getByRole('searchbox', {name: 'Search projects'}), {target: {value: 'next idea'}});
+  window.history.pushState({}, '', '/projects/project-1');
+  await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 300)); });
+  assert.equal(window.location.pathname, '/projects/project-1');
+  assert.equal(calls, 1);
+});
