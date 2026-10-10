@@ -1,5 +1,6 @@
 # ProjectHub API
 Base `/api`, JSON, browser credentials included. Cookies are httpOnly; mutations require Origin matching WEB_ORIGIN (default http://localhost:3000). Error shape `{statusCode,message}`.
+Optional request fields may be omitted but cannot be `null`. Human-readable text, email, URLs, and individual technology/team names are trimmed before validation; passwords are preserved exactly. Empty strings clear optional text fields, and an empty screenshot array clears screenshots.
 - POST /auth/signup {name,email,password,department,semester}; POST /auth/login {email,password}; POST /auth/logout; GET /auth/me -> user object (401 logged out).
 - PATCH /profile {name?,department?,semester?,bio?} -> user.
 - GET /projects?q=&department=&semester=&type=&tech=&page=1&limit=12&sort=recent|popular -> {items,total,page,limit,pages}. Approved only.
