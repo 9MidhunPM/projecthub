@@ -38,7 +38,9 @@ export type Project = {
   bookmarked: boolean;
 };
 
-export type Listing = {items: Project[]; total: number; page: number; limit: number; pages: number};
+export type Page<T> = {items: T[]; total: number; page: number; limit: number; pages: number};
+export type Listing = Page<Project>;
+export type WorkspaceListing = Listing & {summary: {total: number; published: number; pending: number; byStatus: Record<ProjectStatus, number>}};
 export type Engagement = {liked: boolean; bookmarked: boolean; likes: number};
 
 type ApiErrorCode = 'http' | 'network' | 'invalid_response';

@@ -9,6 +9,7 @@ export const student: User = {id: 'student-1', name: 'A Student', email: 'studen
 export const project: Project = {id: 'project-1', title: 'Campus ideas', description: 'A useful student project with a clear description.', department: 'Computer Science', semester: 2, type: 'Web Application', techStack: ['React'], teamMembers: ['A Student'], screenshots: [], status: 'APPROVED', version: 1, views: 1, createdAt: '2026-10-10T10:00:00.000Z', updatedAt: '2026-10-10T10:00:00.000Z', ownerId: student.id, owner: {id: student.id, name: student.name, department: student.department, semester: student.semester}, likes: 0, liked: false, bookmarked: false};
 
 export function renderApp(children: ReactNode, path = '/') {
+  if (window.location.pathname !== path) window.history.replaceState({}, '', path);
   const navigation: {method: 'push' | 'replace'; href: string}[] = [];
   const router = {back() {}, forward() {}, refresh() {}, hmrRefresh() {}, prefetch: async () => {}, push: (href: string) => { navigation.push({method: 'push', href}); }, replace: (href: string) => { navigation.push({method: 'replace', href}); }};
   return {...render(<AppRouterContext.Provider value={router}><PathnameContext.Provider value={path}><AppProvider>{children}</AppProvider></PathnameContext.Provider></AppRouterContext.Provider>), navigation};
@@ -20,3 +21,6 @@ export function deferred<T>() {
   const promise = new Promise<T>((accept, fail) => { resolve = accept; reject = fail; });
   return {promise, resolve, reject};
 }
+
+export function listing<T>(items: T[], total = items.length, page = 1, limit = 12) { return {items, total, page, limit, pages: Math.ceil(total / limit)}; }
+export const workspaceSummary = {total: 13, published: 9, pending: 4, byStatus: {DRAFT: 0, PENDING: 4, APPROVED: 9, CHANGES_REQUESTED: 0, HIDDEN: 0}};
