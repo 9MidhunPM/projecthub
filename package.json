@@ -23,7 +23,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:generate": "npm run prisma:generate -w @projecthub/api",
     "db:migrate": "npm run db:migrate -w @projecthub/api",
-    "db:seed": "npm run db:seed -w @projecthub/api"
+    "db:seed": "npm run db:seed -w @projecthub/api",
+    "test:restore": "node scripts/with-test-database.cjs node --test --test-concurrency=1 scripts/test/recovery.integration.test.cjs"
   },
   "devDependencies": {
     "concurrently": "9.2.1"
