@@ -13,7 +13,7 @@ import { ApiController, uploadDir } from './controller';
 import { AuthService, AuthGuard } from './auth';
 @Module({controllers:[ApiController],providers:[Db,AuthService,AuthGuard]})
 export class AppModule {}
-export async function bootstrap(){
+export async function bootstrap(options: { port?: number; host?: string } = {}){
  const app=await NestFactory.create<NestExpressApplication>(AppModule,{bodyParser:true});
  const trustedProxies=(process.env.TRUST_PROXY_IPS||'').split(',').map(s=>s.trim()).filter(Boolean);if(trustedProxies.some(ip=>!isIP(ip)))throw new Error('TRUST_PROXY_IPS must contain explicit IP addresses');if(trustedProxies.length)app.set('trust proxy',trustedProxies);
  app.setGlobalPrefix('api');app.use(helmet());app.use(cookieParser());app.use(json({limit:'256kb'}));
@@ -25,6 +25,6 @@ export async function bootstrap(){
  app.use(['/api/auth/login','/api/auth/signup'],rateLimit({windowMs:15*60000,limit:40,standardHeaders:'draft-8',legacyHeaders:false}));
 
  app.useGlobalPipes(new ValidationPipe({whitelist:true,forbidNonWhitelisted:true,transform:true}));
- app.enableShutdownHooks();await app.listen(Number(process.env.PORT)||4000,'0.0.0.0');return app;
+ app.enableShutdownHooks();await app.listen(options.port ?? (Number(process.env.PORT)||4000),options.host ?? '0.0.0.0');return app;
 }
 if(require.main===module)bootstrap().catch(error=>{console.error(error);process.exit(1);});
