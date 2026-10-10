@@ -12,6 +12,7 @@ import { LoginDto, SignupDto, ProfileDto, ProjectDto, ModerationDto, RoleDto } f
 import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie, sessionTokenId } from './security';
 import { parseProjectQuery } from './project-query';
 import { projectInclude as include, ProjectWithCounts, shapeProjects } from './project-shape';
+import { ensureModerationTransition, guardProjectWrite } from './project-state';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 @Controller()
 export class ApiController {
@@ -57,9 +58,35 @@ export class ApiController {
  @Get('projects/:id') async detail(@Param('id') id:string,@Req() req:AuthRequest){return this.shape(await this.project(id,req),req.user?.id);}
  private async validateScreenshots(body:ProjectDto,userId:string){for(const url of body.screenshots||[]){if(['/examples/campus-connect.png','/examples/ecotrack.png','/examples/study-space.png'].includes(url))continue;try{const filename=url.split('/').pop()!;const upload=await this.db.upload.findUnique({where:{filename}});if(!upload||upload.ownerId!==userId)throw Error();await stat(resolve(uploadDir,filename));}catch{throw new BadRequestException('Screenshot does not exist');}}for(const value of [body.githubUrl,body.demoUrl])if(value){try{const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error();}catch{throw new BadRequestException('Links must be valid HTTP or HTTPS URLs');}}}
  @Post('projects') @UseGuards(AuthGuard) async create(@Body() body:ProjectDto,@Req() req:AuthRequest){await this.validateScreenshots(body,req.user!.id);return this.shape(await this.db.project.create({data:{...body,screenshots:body.screenshots||[],ownerId:req.user!.id},include}),req.user!.id);}
- @Patch('projects/:id') @UseGuards(AuthGuard) async update(@Param('id') id:string,@Body() body:ProjectDto,@Req() req:AuthRequest){const p=await this.project(id,req);ensureOwner(p,req.user!);await this.validateScreenshots(body,req.user!.id);return this.shape(await this.db.project.update({where:{id},data:{...body,status:'DRAFT',feedback:''},include}),req.user!.id);}
- @Delete('projects/:id') @UseGuards(AuthGuard) async remove(@Param('id') id:string,@Req() req:AuthRequest){ensureOwner(await this.project(id,req),req.user!);await this.db.project.delete({where:{id}});return {ok:true};}
- @Post('projects/:id/submit') @UseGuards(AuthGuard) async submit(@Param('id') id:string,@Req() req:AuthRequest){const p=await this.project(id,req);ensureOwner(p,req.user!);if(!['DRAFT','CHANGES_REQUESTED'].includes(p.status))throw new BadRequestException('Only drafts or changes-requested projects can be submitted');return this.shape(await this.db.project.update({where:{id},data:{status:'PENDING',feedback:''},include}),req.user!.id);}
+ @Patch('projects/:id') @UseGuards(AuthGuard)
+ async update(@Param('id') id:string,@Body() body:ProjectDto,@Req() req:AuthRequest) {
+  const project=await this.project(id,req);
+  ensureOwner(project,req.user!);
+  await this.validateScreenshots(body,req.user!.id);
+  const updated=await guardProjectWrite(()=>this.db.project.update({
+   where:{id,ownerId:req.user!.id,version:project.version,status:project.status},
+   data:{...body,status:'DRAFT',feedback:'',version:{increment:1}},include,
+  }));
+  return this.shape(updated,req.user!.id);
+ }
+ @Delete('projects/:id') @UseGuards(AuthGuard)
+ async remove(@Param('id') id:string,@Req() req:AuthRequest) {
+  const project=await this.project(id,req);
+  ensureOwner(project,req.user!);
+  await guardProjectWrite(()=>this.db.project.delete({where:{id,ownerId:req.user!.id,version:project.version,status:project.status}}));
+  return {ok:true};
+ }
+ @Post('projects/:id/submit') @UseGuards(AuthGuard)
+ async submit(@Param('id') id:string,@Req() req:AuthRequest) {
+  const project=await this.project(id,req);
+  ensureOwner(project,req.user!);
+  if(!['DRAFT','CHANGES_REQUESTED'].includes(project.status)) throw new BadRequestException('Only drafts or changes-requested projects can be submitted');
+  const updated=await guardProjectWrite(()=>this.db.project.update({
+   where:{id,ownerId:req.user!.id,version:project.version,status:project.status},
+   data:{status:'PENDING',feedback:'',version:{increment:1}},include,
+  }));
+  return this.shape(updated,req.user!.id);
+ }
  @Post('projects/:id/view') async view(@Param('id') id:string,@Req() req:AuthRequest,@Res({passthrough:true}) res:Response){const p=await this.project(id,req);if(p.status!=='APPROVED')return {views:p.views};let visitor=req.cookies?.ph_visitor;if(typeof visitor!=='string'||!/^[a-f0-9]{64}$/.test(visitor)){visitor=randomBytes(32).toString('hex');res.cookie('ph_visitor',visitor,{httpOnly:true,sameSite:'lax',secure:secureCookie(),path:'/api',maxAge:365*86400000});}const key={projectId:id,visitor:digest(req.user?.id||visitor),day:new Date().toISOString().slice(0,10)};try{await this.db.$transaction([this.db.viewEvent.create({data:key}),this.db.project.update({where:{id},data:{views:{increment:1}}})]);}catch(e){if(!(e instanceof Prisma.PrismaClientKnownRequestError&&e.code==='P2002'))throw e;}return {views:(await this.db.project.findUniqueOrThrow({where:{id}})).views};}
  private async toggle(id:string,req:AuthRequest,kind:'like'|'bookmark',on:boolean){const p=await this.project(id,req);if(p.status!=='APPROVED')throw new BadRequestException('Project must be approved');const key={userId:req.user!.id,projectId:id};if(kind==='like'){if(on)await this.db.like.upsert({where:{userId_projectId:key},create:key,update:{}});else await this.db.like.deleteMany({where:key});}else{if(on)await this.db.bookmark.upsert({where:{userId_projectId:key},create:key,update:{}});else await this.db.bookmark.deleteMany({where:key});}const shaped=await this.shape(await this.db.project.findUniqueOrThrow({where:{id},include}),req.user!.id);return {liked:shaped.liked,bookmarked:shaped.bookmarked,likes:shaped.likes};}
  @Put('projects/:id/like') @UseGuards(AuthGuard) like(@Param('id') id:string,@Req() req:AuthRequest){return this.toggle(id,req,'like',true);}
@@ -69,7 +96,21 @@ export class ApiController {
  @Post('uploads') @UseGuards(AuthGuard) @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5*1024*1024,files:1}})) async upload(@UploadedFile() file:Express.Multer.File,@Req() req:AuthRequest){if(!file)throw new BadRequestException('Choose an image');let buffer:Buffer;try{buffer=await normalizeUpload(file.buffer);}catch{throw new BadRequestException('Use a valid PNG, JPEG or WebP image');}await mkdir(uploadDir,{recursive:true});const name=randomUUID()+'.webp';await writeFile(resolve(uploadDir,name),buffer,{flag:'wx'});await this.db.upload.create({data:{filename:name,ownerId:req.user!.id}});return {url:'/api/uploads/'+name};}
  @Get('uploads/:filename') async image(@Param('filename') filename:string,@Req() req:AuthRequest,@Res() res:Response){if(!/^[a-f0-9-]+\.webp$/.test(filename))throw new NotFoundException();const upload=await this.db.upload.findUnique({where:{filename}});if(!upload)throw new NotFoundException();const user=await this.current(req);const published=await this.db.project.findFirst({where:{status:'APPROVED',screenshots:{has:'/api/uploads/'+filename}},select:{id:true}});if(!published&&user?.id!==upload.ownerId&&!['FACULTY','ADMIN'].includes(user?.role||''))throw new NotFoundException();res.setHeader('Cache-Control','private, no-store');res.sendFile(resolve(uploadDir,filename));}
  @Get('moderation/projects') @UseGuards(AuthGuard) async queue(@Req() req:AuthRequest,@Query('status') status='PENDING'){ensureReviewer(req.user!);if(!Object.values(ProjectStatus).includes(status as ProjectStatus))throw new BadRequestException('Invalid status');return shapeProjects(this.db,await this.db.project.findMany({where:{status:status as ProjectStatus},include,orderBy:{updatedAt:'asc'}}),req.user!.id);}
- @Patch('moderation/projects/:id') @UseGuards(AuthGuard) async moderate(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ModerationDto){ensureReviewer(req.user!);const p=await this.project(id,req);if(p.ownerId===req.user!.id)throw new ForbiddenException('You cannot review your own project');if(body.status==='APPROVED'&&p.status!=='PENDING')throw new BadRequestException('Only pending projects can be approved');if(body.status==='CHANGES_REQUESTED'&&!body.feedback?.trim())throw new BadRequestException('Feedback is required');const [project]=await this.db.$transaction([this.db.project.update({where:{id,updatedAt:p.updatedAt,status:p.status},data:{status:body.status,feedback:body.feedback||''},include}),this.db.audit.create({data:{actorId:req.user!.id,action:'MODERATE_PROJECT',targetId:id,details:JSON.stringify(body)}})]);return this.shape(project,req.user!.id);}
+ @Patch('moderation/projects/:id') @UseGuards(AuthGuard)
+ async moderate(@Param('id') id:string,@Req() req:AuthRequest,@Body() body:ModerationDto) {
+  ensureReviewer(req.user!);
+  const current=await this.project(id,req);
+  if(current.ownerId===req.user!.id) throw new ForbiddenException('You cannot review your own project');
+  ensureModerationTransition(current.status,body.status,body.feedback);
+  const [project]=await guardProjectWrite(()=>this.db.$transaction([
+   this.db.project.update({
+    where:{id,version:current.version,status:current.status},
+    data:{status:body.status,feedback:body.feedback||'',version:{increment:1}},include,
+   }),
+   this.db.audit.create({data:{actorId:req.user!.id,action:'MODERATE_PROJECT',targetId:id,details:JSON.stringify(body)}}),
+  ]));
+  return this.shape(project,req.user!.id);
+ }
  private admin(req:AuthRequest){if(req.user!.role!=='ADMIN')throw new ForbiddenException('Administrator access required');}
  @Get('admin/users') @UseGuards(AuthGuard) users(@Req() req:AuthRequest){this.admin(req);return this.db.user.findMany({select:userSelect,orderBy:{createdAt:'desc'},take:500});}
  @Patch('admin/users/:id/role') @UseGuards(AuthGuard) async role(@Param('id') id:string,@Body() body:RoleDto,@Req() req:AuthRequest){this.admin(req);if(id===req.user!.id)throw new BadRequestException('You cannot change your own administrator role');if(!await this.db.user.findUnique({where:{id}}))throw new NotFoundException('User not found');const [user]=await this.db.$transaction([this.db.user.update({where:{id},data:{role:body.role},select:userSelect}),this.db.audit.create({data:{actorId:req.user!.id,action:'CHANGE_ROLE',targetId:id,details:JSON.stringify(body)}})]);return user;}
