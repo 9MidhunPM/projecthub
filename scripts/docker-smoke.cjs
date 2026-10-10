@@ -111,6 +111,13 @@ async function command(args, { signal, timeoutMs = 60000 } = {}) {
   }
 }
 
+async function recoverDatabase(compose, run, waitForReadiness) {
+  // Some hosted Compose versions lack `start --wait`. The application readiness
+  // poll already supplies a bounded check of the database, API, and proxy.
+  await run([...compose, 'start', 'db']);
+  await waitForReadiness(200);
+}
+
 async function main() {
   const project = projectName(process.env);
   const port = await unusedPort();
@@ -140,6 +147,8 @@ async function main() {
   };
   let mayClean = false;
   try {
+    const version = await run(['compose', 'version']);
+    console.log('Compose tooling:', sanitize(version.output.trim()));
     const config = await json([...compose, 'config', '--format', 'json'], { signal: controller.signal });
     validateConfig(config, project, port);
     for (const kind of ['container', 'volume', 'network']) assert.equal((await inventory(kind, { signal: controller.signal })).length, 0, 'The smoke project must start empty.');
@@ -189,8 +198,7 @@ async function main() {
     assert.equal(live.status, 200);
     await live.arrayBuffer();
     await waitForReadiness(503);
-    await run([...compose, 'start', '--wait', '--wait-timeout', '90', 'db'], { timeoutMs: 110000 });
-    await waitForReadiness(200);
+    await recoverDatabase(compose, run, waitForReadiness);
     console.log('Docker smoke passed: migrations, health, proxy/assets, non-root users, volume persistence, port isolation, and database recovery.');
   } catch (error) {
     console.error(sanitize(error.message));
@@ -216,4 +224,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(sanitize(error.message)); process.exitCode = 1; });
-module.exports = { projectName, sanitize, validateConfig, validateOwned, validateRuntime };
+module.exports = { projectName, sanitize, validateConfig, validateOwned, validateRuntime, recoverDatabase };

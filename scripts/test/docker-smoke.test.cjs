@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { projectName, sanitize, validateConfig, validateOwned, validateRuntime } = require('../docker-smoke.cjs');
+const { projectName, sanitize, validateConfig, validateOwned, validateRuntime, recoverDatabase } = require('../docker-smoke.cjs');
 
 const project = 'projecthub-ci-123-1-aabbccddeeff';
 const port = 32123;
@@ -109,4 +109,36 @@ test('failure diagnostics redact fixture passwords and credential URLs and stay 
   for (const value of ['person', 'sensitive', 'other', 'private', 'ci-only-local-password']) assert(!output.includes(value));
   assert(output.includes('failure'));
   assert(sanitize('x'.repeat(20000)).length <= 12000);
+});
+
+
+test('database recovery uses compatible start arguments and awaits application readiness', async () => {
+  const compose = ['compose', '--project-name', project, '-f', 'compose.yaml'];
+  const calls = [];
+  let release;
+  const ready = new Promise(resolve => { release = resolve; });
+  let completed = false;
+  const recovery = recoverDatabase(compose, async args => {
+    calls.push(['command', args]);
+  }, async status => {
+    calls.push(['ready', status]);
+    await ready;
+  }).then(() => { completed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [
+    ['command', [...compose, 'start', 'db']],
+    ['ready', 200],
+  ]);
+  assert.equal(completed, false, 'Starting the container alone does not establish recovery.');
+  release();
+  await recovery;
+  assert.equal(completed, true);
+  assert.deepEqual(compose, ['compose', '--project-name', project, '-f', 'compose.yaml']);
+});
+
+test('database startup and readiness failures cannot be reported as recovery success', async () => {
+  let readinessCalled = false;
+  await assert.rejects(recoverDatabase(['compose'], async () => { throw new Error('start failed'); }, async () => { readinessCalled = true; }), /start failed/);
+  assert.equal(readinessCalled, false);
+  await assert.rejects(recoverDatabase(['compose'], async () => {}, async () => { throw new Error('readiness timeout'); }), /readiness timeout/);
 });
