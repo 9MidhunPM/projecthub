@@ -4,6 +4,7 @@ Optional request fields may be omitted but cannot be `null`. Human-readable text
 - POST /auth/signup {name,email,password,department,semester}; POST /auth/login {email,password}; POST /auth/logout; GET /auth/me -> user object (401 logged out).
 - PATCH /profile {name?,department?,semester?,bio?} -> user.
 - GET /projects?q=&department=&semester=&type=&tech=&page=1&limit=12&sort=recent|popular -> {items,total,page,limit,pages}. Approved only.
+  Query values must be single strings (repeated/structured values return 400). Page is an integer 1–10000; limit is 1–48; semester is 1–12. Out-of-range or malformed numbers and unknown sort values return 400. Search is at most 200 characters, department 80, type 60, technology 40. Empty text filters are ignored. Recent/popular sorts have deterministic timestamp/ID tie-breakers.
 - GET /projects/:id -> project; POST /projects/:id/view -> {views}; GET /my/projects -> project[]; GET /my/bookmarks -> project[].
 - POST /projects, PATCH /projects/:id {title,description,department,semester,type,techStack:string[],teamMembers:string[],githubUrl?,demoUrl?,screenshots?:string[]} -> project. Create defaults draft, edit approved/pending resets draft. DELETE /projects/:id.
 - POST /projects/:id/submit -> project (PENDING).

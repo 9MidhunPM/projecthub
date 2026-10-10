@@ -10,6 +10,7 @@ import { Db } from './db';
 import { AuthRequest, AuthGuard, AuthService, userSelect, publicUserSelect } from './auth';
 import { LoginDto, SignupDto, ProfileDto, ProjectDto, ModerationDto, RoleDto } from './dto';
 import { digest, hashPassword, verifyPassword, ensureOwner, ensureReviewer, ensureVisible, secureCookie } from './security';
+import { parseProjectQuery } from './project-query';
 export const uploadDir=resolve(process.env.UPLOAD_DIR||'var/uploads');
 const include={owner:{select:publicUserSelect},_count:{select:{likes:true,bookmarks:true}}};
 @Controller()
@@ -25,7 +26,16 @@ export class ApiController {
  @Post('auth/logout') @UseGuards(AuthGuard) async logout(@Req() req:AuthRequest,@Res({passthrough:true}) res:Response){await this.db.session.deleteMany({where:{id:req.sessionId!}});res.clearCookie('ph_session',{path:'/api',httpOnly:true,secure:secureCookie,sameSite:'lax'});return {ok:true};}
  @Get('auth/me') @UseGuards(AuthGuard) me(@Req() req:AuthRequest){const {passwordHash,...safe}=req.user!;return safe;}
  @Patch('profile') @UseGuards(AuthGuard) profile(@Req() req:AuthRequest,@Body() body:ProfileDto){return this.db.user.update({where:{id:req.user!.id},data:body,select:userSelect});}
- @Get('projects') async list(@Query() q:Record<string,string>,@Req() req:AuthRequest){const user=await this.current(req);const page=Math.max(1,Math.min(10000,Number(q.page)||1));const limit=Math.max(1,Math.min(48,Number(q.limit)||12));if(!Number.isInteger(page)||!Number.isInteger(limit))throw new BadRequestException('Invalid pagination');const where:Prisma.ProjectWhereInput={status:'APPROVED'};if(q.q)where.OR=['title','description'].map(field=>({[field]:{contains:q.q.slice(0,200),mode:'insensitive'}}));if(q.department)where.department=q.department;if(q.semester){const semester=Number(q.semester);if(!Number.isInteger(semester)||semester<1||semester>12)throw new BadRequestException('Invalid semester');where.semester=semester;}if(q.type)where.type=q.type;if(q.tech)where.techStack={has:q.tech};const [items,total]=await Promise.all([this.db.project.findMany({where,include,skip:(page-1)*limit,take:limit,orderBy:q.sort==='popular'?{likes:{_count:'desc'}}:{createdAt:'desc'}}),this.db.project.count({where})]);return {items:await Promise.all(items.map(p=>this.shape(p,user?.id))),total,page,limit,pages:Math.ceil(total/limit)};}
+ @Get('projects')
+ async list(@Query() query:Record<string,unknown>,@Req() req:AuthRequest) {
+  const {page,limit,where,orderBy}=parseProjectQuery(query);
+  const user=await this.current(req);
+  const [items,total]=await Promise.all([
+   this.db.project.findMany({where,include,skip:(page-1)*limit,take:limit,orderBy}),
+   this.db.project.count({where}),
+  ]);
+  return {items:await Promise.all(items.map(project=>this.shape(project,user?.id))),total,page,limit,pages:Math.ceil(total/limit)};
+ }
  @Get('my/projects') @UseGuards(AuthGuard) async mine(@Req() req:AuthRequest){return Promise.all((await this.db.project.findMany({where:{ownerId:req.user!.id},include,orderBy:{updatedAt:'desc'}})).map(p=>this.shape(p,req.user!.id)));}
  @Get('my/bookmarks') @UseGuards(AuthGuard) async bookmarks(@Req() req:AuthRequest){return Promise.all((await this.db.project.findMany({where:{status:'APPROVED',bookmarks:{some:{userId:req.user!.id}}},include,orderBy:{createdAt:'desc'}})).map(p=>this.shape(p,req.user!.id)));}
  @Get('projects/:id') async detail(@Param('id') id:string,@Req() req:AuthRequest){return this.shape(await this.project(id,req),req.user?.id);}
