@@ -19,6 +19,7 @@
     "test:integration": "npm run test:integration -w @projecthub/api",
     "test:db": "node scripts/with-test-database.cjs",
     "test:fullstack": "node --test --test-concurrency=1 scripts/test/fullstack.integration.test.cjs",
+    "security:audit": "node scripts/audit-dependencies.cjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:generate": "npm run prisma:generate -w @projecthub/api",
     "db:migrate": "npm run db:migrate -w @projecthub/api",

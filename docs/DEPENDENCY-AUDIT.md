@@ -1,4 +1,4 @@
-# Dependency security review — 2026-10-09
+# Dependency security review — 2026-10-10
 
 ## Decision
 
@@ -16,7 +16,15 @@ The audit after remediation reports five affected package entries: four high and
 - **deepmerge-ts 7.1.5**, through `@prisma/config` and Prisma CLI 6.19.3. [GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx) requires merging cyclic JavaScript object graphs; ordinary JSON cannot create those cycles. In the installed Prisma code the import is used by trusted TypeScript/JavaScript configuration loading. No application HTTP request is passed into this configuration loader. Prisma migration/generation tools operate on operator-controlled source. The upstream fixed version is 8.0.0, a major version, so no forced transitive major update was applied.
 - **PostCSS 8.4.31**, nested under Next.js 15.5.27. The application compiles repository-controlled CSS during the build; it does not accept CSS or sourcemaps from users. The [stringification XSS](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) is patched at 8.5.10. Source-map loading advisories are [GHSA-6g55-p6wh-862q](https://github.com/advisories/GHSA-6g55-p6wh-862q), [GHSA-r28c-9q8g-f849](https://github.com/advisories/GHSA-r28c-9q8g-f849), and [GHSA-fxqj-rqcc-2cmp](https://github.com/advisories/GHSA-fxqj-rqcc-2cmp); the latest affected range ends at 8.5.22. The root PostCSS is already 8.5.29, but Next pins its nested copy. A non-effective override was removed rather than presenting it as a repair. Revisit through a verified compatible Next.js dependency update.
 
-Both container recipes currently retain build dependencies. These components are therefore present on disk in production, even though the identified vulnerable operations are build/CLI operations rather than application request handlers. Do not use these tools on untrusted project/configuration files.
+The API container recipe still retains build dependencies for migration/seed tooling. The frontend now copies Next's traced standalone runtime rather than the complete workspace, but its traced Next package still contains the affected nested PostCSS copy. This packaging change does not resolve that advisory. Do not use these tools on untrusted project/configuration files.
+
+## Reproducible gate and review expiry
+
+Run `npm run security:audit`. It requests the current npm advisory report for the exact lockfile and fails on registry/report errors, new advisories, changed severity, changed affected versions/paths, expired reviews, or obsolete exceptions. It does not run `npm audit fix`, force major dependency overrides, or silently ignore every finding in a package.
+
+`docs/AUDIT-EXCEPTIONS.json` records the five reviewed advisory IDs above, exact installed locations and versions, rationale, and a **2026-11-09** expiry. The current report has five propagated affected package entries (four high, one moderate, zero critical); five leaf advisories are temporarily accepted for the narrowly described build/CLI paths. A passing gate means the report matches this explicit temporary policy, not that the dependency tree has zero known vulnerabilities. Any renewal requires reviewing the current call paths and upstream fixes; do not merely extend the date to make CI green.
+
+The 2026-10-10 run after adding pinned DOM-testing development tools still matched these five reviewed advisories. Unit fixtures exercise new/critical findings, nested dependency copies, expired and stale exceptions, cyclic/incomplete reports, and unavailable registry responses.
 
 ## Verification
 

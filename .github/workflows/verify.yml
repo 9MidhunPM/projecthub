@@ -37,6 +37,7 @@ jobs:
       - run: npm run db:generate
       - run: npm run typecheck
       - run: npm test
+      - run: npm run security:audit
       - run: npm run build
 
   database-and-proxy:
