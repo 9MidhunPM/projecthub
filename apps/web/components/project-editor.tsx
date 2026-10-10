@@ -27,8 +27,15 @@ function Editor({id}: {id?: string}) {
   const [retry, setRetry] = useState(0);
   const [savedDraft, setSavedDraft] = useState(false);
   const pending = useRef(false);
+  const mounted = useRef(true);
+  const mutation = useRef<AbortController | null>(null);
   const savedId = useRef(id);
   const errorSummary = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; mutation.current?.abort(); };
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -56,22 +63,27 @@ function Editor({id}: {id?: string}) {
     if (validation) { setError(validation); return; }
     const action = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'submit' ? 'submit' : 'draft';
     pending.current = true;
+    const controller = new AbortController();
+    mutation.current = controller;
     setBusy(action);
     setError('');
     setSavedDraft(false);
     try {
       const currentId = savedId.current;
       const saved = await api<Project>(currentId ? `/projects/${currentId}` : '/projects', {
-        method: currentId ? 'PATCH' : 'POST', body: JSON.stringify(projectPayload(form, screenshots)),
+        method: currentId ? 'PATCH' : 'POST', body: JSON.stringify(projectPayload(form, screenshots)), signal: controller.signal,
       });
+      if (!mounted.current || controller.signal.aborted) return;
       // Keep the created ID before submission. Retrying a failed second step
       // must update this draft instead of creating another project.
       savedId.current = saved.id;
       setOriginal(saved);
       if (action === 'submit') {
         try {
-          await api(`/projects/${saved.id}/submit`, {method: 'POST'});
+          await api(`/projects/${saved.id}/submit`, {method: 'POST', signal: controller.signal});
+          if (!mounted.current || controller.signal.aborted) return;
         } catch (failure) {
+          if (!mounted.current || isAbortError(failure)) return;
           setSavedDraft(true);
           setError(`Your draft was saved, but it could not be submitted: ${(failure as Error).message}`);
           return;
@@ -80,10 +92,11 @@ function Editor({id}: {id?: string}) {
       notify(action === 'submit' ? 'Project submitted for review.' : 'Draft saved.');
       router.push('/workspace');
     } catch (failure) {
-      setError((failure as Error).message);
+      if (mounted.current && !isAbortError(failure)) setError((failure as Error).message);
     } finally {
       pending.current = false;
-      setBusy(null);
+      mutation.current = null;
+      if (mounted.current) setBusy(null);
     }
   }
 
@@ -91,17 +104,21 @@ function Editor({id}: {id?: string}) {
     const currentId = savedId.current;
     if (!currentId || pending.current || uploading || !window.confirm('Delete this project? This cannot be undone.')) return;
     pending.current = true;
+    const controller = new AbortController();
+    mutation.current = controller;
     setBusy('delete');
     setError('');
     try {
-      await api(`/projects/${currentId}`, {method: 'DELETE'});
+      await api(`/projects/${currentId}`, {method: 'DELETE', signal: controller.signal});
+      if (!mounted.current || controller.signal.aborted) return;
       notify('Project deleted.');
       router.push('/workspace');
     } catch (failure) {
-      setError((failure as Error).message);
+      if (mounted.current && !isAbortError(failure)) setError((failure as Error).message);
     } finally {
       pending.current = false;
-      setBusy(null);
+      mutation.current = null;
+      if (mounted.current) setBusy(null);
     }
   }
 
@@ -110,7 +127,7 @@ function Editor({id}: {id?: string}) {
   if (original && original.ownerId !== user?.id) return <div className="empty"><h1>You can only edit your own projects.</h1><p>Return to your workspace to choose one of your projects.</p><Link className="button" href="/workspace">My workspace</Link></div>;
 
   return <div className="page-container editor-page">
-    <Link className="back-link" href="/workspace"><ArrowLeft size={16} aria-hidden="true"/>My workspace</Link>
+    <Link className="back-link" href="/workspace" aria-disabled={Boolean(busy) || uploading} onClick={event => { if (pending.current || uploading) event.preventDefault(); }}><ArrowLeft size={16} aria-hidden="true"/>My workspace</Link>
     <div className="page-title"><div><h1>{savedId.current ? 'Refine your project.' : 'Bring your idea to life.'}</h1><p>{savedId.current ? 'Keep your project story clear, current, and complete.' : 'Tell the story behind what you built.'}</p></div></div>
     <form onSubmit={save} aria-busy={Boolean(busy)}>
       <fieldset className="editor-fields" disabled={Boolean(busy)}>
@@ -120,14 +137,14 @@ function Editor({id}: {id?: string}) {
             <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage message={error}/>{savedDraft && <Link className="text-link" href="/workspace">Find your saved draft in My workspace</Link>}</div>
             {original && ['APPROVED', 'PENDING'].includes(original.status) && <div className="review-note">Saving edits returns this project to draft and removes it from Explore until it is approved again.</div>}
             <label>Project title<input name="title" required minLength={3} maxLength={120} value={form.title} onChange={event => update('title', event.target.value)} placeholder="Give your project a clear, memorable name"/></label>
-            <label>Description<textarea name="description" required minLength={20} maxLength={20000} rows={7} value={form.description} onChange={event => update('description', event.target.value)} aria-describedby="description-hint" placeholder="What problem does it solve? What did you build, and what did you learn?"/><small id="description-hint">20–20,000 characters. Make it understandable to someone seeing it for the first time. {form.description.length.toLocaleString()} used.</small></label>
+            <label><span id="description-label">Description</span><textarea aria-labelledby="description-label" name="description" required minLength={20} maxLength={20000} rows={7} value={form.description} onChange={event => update('description', event.target.value)} aria-describedby="description-hint" placeholder="What problem does it solve? What did you build, and what did you learn?"/><small id="description-hint">20–20,000 characters. Make it understandable to someone seeing it for the first time. {form.description.length.toLocaleString()} used.</small></label>
             <div className="form-grid">
               <label>Department<select value={form.department} onChange={event => update('department', event.target.value)}>{!departments.includes(form.department) && <option>{form.department}</option>}{departments.map(department => <option key={department}>{department}</option>)}</select></label>
               <label>Semester<select value={form.semester} onChange={event => update('semester', event.target.value)}>{Array.from({length: 12}, (_, index) => <option key={index} value={index + 1}>Semester {index + 1}</option>)}</select></label>
             </div>
             <label>Project type<select value={form.type} onChange={event => update('type', event.target.value)}>{!projectTypes.includes(form.type) && <option>{form.type}</option>}{projectTypes.map(type => <option key={type}>{type}</option>)}</select></label>
-            <label>Technologies<input value={form.techStack} required maxLength={840} onChange={event => update('techStack', event.target.value)} aria-describedby="technologies-hint" placeholder="React, Node.js, PostgreSQL"/><small id="technologies-hint">Separate technologies with commas. Up to 20 items, 40 characters each.</small></label>
-            <label>Team members<input value={form.teamMembers} maxLength={1640} onChange={event => update('teamMembers', event.target.value)} aria-describedby="team-hint" placeholder="Your name, Teammate name"/><small id="team-hint">Separate names with commas. Up to 20 people, 80 characters each. Listed names will be public after approval.</small></label>
+            <label><span id="technologies-label">Technologies</span><input aria-labelledby="technologies-label" value={form.techStack} required maxLength={840} onChange={event => update('techStack', event.target.value)} aria-describedby="technologies-hint" placeholder="React, Node.js, PostgreSQL"/><small id="technologies-hint">Separate technologies with commas. Up to 20 items, 40 characters each.</small></label>
+            <label><span id="team-label">Team members</span><input aria-labelledby="team-label" value={form.teamMembers} maxLength={1640} onChange={event => update('teamMembers', event.target.value)} aria-describedby="team-hint" placeholder="Your name, Teammate name"/><small id="team-hint">Separate names with commas. Up to 20 people, 80 characters each. Listed names will be public after approval.</small></label>
             <div className="form-grid">
               <label>GitHub repository <span className="optional">(optional)</span><input type="url" maxLength={2000} value={form.githubUrl} onChange={event => update('githubUrl', event.target.value)} placeholder="https://github.com/…"/></label>
               <label>Live demo <span className="optional">(optional)</span><input type="url" maxLength={2000} value={form.demoUrl} onChange={event => update('demoUrl', event.target.value)} placeholder="https://…"/></label>
@@ -140,7 +157,7 @@ function Editor({id}: {id?: string}) {
           </aside>
         </div>
       </fieldset>
-      <div className="editor-footer"><Link href="/workspace" className="button">Cancel</Link><div>
+      <div className="editor-footer">{busy || uploading ? <button type="button" className="button" disabled>Cancel</button> : <Link href="/workspace" className="button">Cancel</Link>}<div>
         <button type="submit" name="action" value="draft" className="button" disabled={Boolean(busy) || uploading}><Save size={16} aria-hidden="true"/>{busy === 'draft' ? 'Saving draft…' : 'Save draft'}</button>
         <button type="submit" name="action" value="submit" className="button primary" disabled={Boolean(busy) || uploading}><Send size={16} aria-hidden="true"/>{busy === 'submit' ? 'Submitting…' : 'Submit for review'}</button>
       </div></div>
