@@ -9,12 +9,12 @@ const { selectTestFiles, testEnvironment } = require('../run-tests.cjs');
 test('unit discovery includes new tests automatically and excludes integration tests', () => {
   const directory = mkdtempSync(join(tmpdir(), 'projecthub-test-discovery-'));
   try {
-    for (const name of ['z.test.ts', 'a.test.cjs', 'b.test.mjs', 'api.integration.test.ts', 'fixture.ts']) {
+    for (const name of ['z.test.ts', 'a.test.cjs', 'b.test.mjs', 'component.test.tsx', 'api.integration.test.ts', 'proxy.integration.test.cjs', 'fixture.ts']) {
       writeFileSync(join(directory, name), '');
     }
     mkdirSync(join(directory, 'directory.test.ts'));
-    assert.deepEqual(selectTestFiles(directory, 'unit').map(file => basename(file)), ['a.test.cjs', 'b.test.mjs', 'z.test.ts']);
-    assert.deepEqual(selectTestFiles(directory, 'integration').map(file => basename(file)), ['api.integration.test.ts']);
+    assert.deepEqual(selectTestFiles(directory, 'unit').map(file => basename(file)), ['a.test.cjs', 'b.test.mjs', 'component.test.tsx', 'z.test.ts']);
+    assert.deepEqual(selectTestFiles(directory, 'integration').map(file => basename(file)), ['api.integration.test.ts', 'proxy.integration.test.cjs']);
     assert.throws(() => selectTestFiles(directory, 'all'), /Choose/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

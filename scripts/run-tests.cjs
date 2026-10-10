@@ -9,8 +9,8 @@ const root = resolve(__dirname, '..');
 function selectTestFiles(directory, suite) {
   if (!['unit', 'integration'].includes(suite)) throw new Error('Choose unit or integration tests.');
   return readdirSync(directory, { withFileTypes: true })
-    .filter(entry => entry.isFile() && /\.test\.(?:ts|cjs|mjs)$/.test(entry.name))
-    .filter(entry => entry.name.endsWith('.integration.test.ts') === (suite === 'integration'))
+    .filter(entry => entry.isFile() && /\.test\.(?:tsx?|[cm]?js)$/.test(entry.name))
+    .filter(entry => /\.integration\.test\.(?:tsx?|[cm]?js)$/.test(entry.name) === (suite === 'integration'))
     .map(entry => resolve(directory, entry.name))
     .sort();
 }
