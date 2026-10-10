@@ -20,3 +20,10 @@ test('missing or self-referential auth destinations fall back to workspace', () 
     assert.equal(safeReturnPath(value), '/workspace');
   }
 });
+
+test('normalized dot segments cannot create a protocol-relative return path', () => {
+  for (const value of ['/a/..//evil.example', '/%2e//evil.example', '/a/%2e%2e//evil.example', '/a/../login']) {
+    assert.equal(safeReturnPath(value), '/workspace', value);
+  }
+  assert.equal(safeReturnPath('/projects/../workspace'), '/workspace');
+});

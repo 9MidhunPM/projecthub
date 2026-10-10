@@ -8,7 +8,9 @@ export function safeReturnPath(value: string | null | undefined): string {
   }
   try {
     const url = new URL(value, LOCAL_ORIGIN);
-    if (url.origin !== LOCAL_ORIGIN || ['/login', '/signup'].includes(url.pathname)) return DEFAULT_DESTINATION;
+    // URL normalization can turn dot segments into a leading double slash.
+    // Re-check the returned pathname, not only the original input and origin.
+    if (url.origin !== LOCAL_ORIGIN || url.pathname.startsWith('//') || ['/login', '/signup'].includes(url.pathname)) return DEFAULT_DESTINATION;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return DEFAULT_DESTINATION;
