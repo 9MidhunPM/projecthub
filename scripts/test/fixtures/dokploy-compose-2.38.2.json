@@ -1,0 +1,235 @@
+{
+  "name": "projecthub-recipe-ci-123-1-aabbccddeeff",
+  "networks": {
+    "default": {
+      "name": "projecthub-recipe-ci-123-1-aabbccddeeff_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "__REPOSITORY_ROOT__",
+        "dockerfile": "Dockerfile.api"
+      },
+      "command": [
+        "node",
+        "apps/api/dist/main.js"
+      ],
+      "depends_on": {
+        "migrate": {
+          "condition": "service_completed_successfully",
+          "required": true
+        }
+      },
+      "entrypoint": [
+        "node",
+        "/app/docker/with-db-secret.cjs"
+      ],
+      "environment": {
+        "COOKIE_SECURE": "true",
+        "NODE_ENV": "production",
+        "PORT": "4000",
+        "UPLOAD_DIR": "/app/apps/api/uploads",
+        "WEB_ORIGIN": "https://projecthub.midhunpm.in"
+      },
+      "expose": [
+        "4000"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "node",
+          "/app/docker/check-health.cjs",
+          "api"
+        ],
+        "timeout": "5s",
+        "interval": "15s",
+        "retries": 5,
+        "start_period": "20s"
+      },
+      "init": true,
+      "networks": {
+        "default": null
+      },
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "uploads",
+          "target": "/app/apps/api/uploads",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "db_credentials",
+          "target": "/run/projecthub-secrets",
+          "read_only": true,
+          "volume": {}
+        }
+      ]
+    },
+    "db": {
+      "command": null,
+      "depends_on": {
+        "secrets-init": {
+          "condition": "service_completed_successfully",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "POSTGRES_DB": "projecthub",
+        "POSTGRES_HOST_AUTH_METHOD": "scram-sha-256",
+        "POSTGRES_PASSWORD_FILE": "/run/projecthub-secrets/postgres-password",
+        "POSTGRES_USER": "projecthub"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U projecthub -d projecthub"
+        ],
+        "timeout": "5s",
+        "interval": "5s",
+        "retries": 15
+      },
+      "image": "postgres:17-bookworm",
+      "networks": {
+        "default": null
+      },
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "postgres_data",
+          "target": "/var/lib/postgresql/data",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "db_credentials",
+          "target": "/run/projecthub-secrets",
+          "read_only": true,
+          "volume": {}
+        }
+      ]
+    },
+    "migrate": {
+      "build": {
+        "context": "__REPOSITORY_ROOT__",
+        "dockerfile": "Dockerfile.api"
+      },
+      "command": [
+        "npm",
+        "run",
+        "db:migrate"
+      ],
+      "depends_on": {
+        "db": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "entrypoint": [
+        "node",
+        "/app/docker/with-db-secret.cjs"
+      ],
+      "networks": {
+        "default": null
+      },
+      "restart": "no",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "db_credentials",
+          "target": "/run/projecthub-secrets",
+          "read_only": true,
+          "volume": {}
+        }
+      ]
+    },
+    "secrets-init": {
+      "build": {
+        "context": "__REPOSITORY_ROOT__",
+        "dockerfile": "Dockerfile.secrets"
+      },
+      "command": null,
+      "entrypoint": null,
+      "networks": {
+        "default": null
+      },
+      "read_only": true,
+      "restart": "no",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "db_credentials",
+          "target": "/run/projecthub-secrets",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "postgres_data",
+          "target": "/var/lib/projecthub-db",
+          "read_only": true,
+          "volume": {}
+        }
+      ]
+    },
+    "web": {
+      "build": {
+        "context": "__REPOSITORY_ROOT__",
+        "dockerfile": "Dockerfile.web",
+        "args": {
+          "API_INTERNAL_URL": "http://api:4000",
+          "NODE_BUILD_OPTIONS": "--max-old-space-size=1536"
+        }
+      },
+      "command": null,
+      "depends_on": {
+        "api": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "API_INTERNAL_URL": "http://api:4000"
+      },
+      "expose": [
+        "3000"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "node",
+          "/app/docker/check-health.cjs",
+          "web"
+        ],
+        "timeout": "5s",
+        "interval": "15s",
+        "retries": 5,
+        "start_period": "20s"
+      },
+      "init": true,
+      "networks": {
+        "default": null
+      },
+      "restart": "unless-stopped"
+    }
+  },
+  "volumes": {
+    "db_credentials": {
+      "name": "projecthub-recipe-ci-123-1-aabbccddeeff_db_credentials"
+    },
+    "postgres_data": {
+      "name": "projecthub-recipe-ci-123-1-aabbccddeeff_postgres_data"
+    },
+    "uploads": {
+      "name": "projecthub-recipe-ci-123-1-aabbccddeeff_uploads"
+    }
+  }
+}

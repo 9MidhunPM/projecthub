@@ -1,8 +1,99 @@
 'use client';
-import {useState} from 'react';
+
+import {useEffect, useRef, useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
-import {ArrowRight,Box} from 'lucide-react';
-import {api,departments} from '@/lib/api';
-import {useApp,ErrorMessage} from './shell';
-export function AuthForm({signup=false}:{signup?:boolean}){const [error,setError]=useState('');const [busy,setBusy]=useState(false);const router=useRouter();const {refresh}=useApp();async function submit(e:React.FormEvent<HTMLFormElement>){e.preventDefault();setBusy(true);setError('');const values=Object.fromEntries(new FormData(e.currentTarget));try{await api(`/auth/${signup?'signup':'login'}`,{method:'POST',body:JSON.stringify({...values,...(signup?{semester:Number(values.semester)}:{})})});await refresh();const next=new URLSearchParams(window.location.search).get('next');router.push(next&&next.startsWith('/')&&!next.startsWith('//')?next:'/workspace')}catch(e){setError((e as Error).message)}finally{setBusy(false)}}return <div className="auth-layout"><div className="auth-story"><Box size={40}/><h1>Your next big idea<br/>belongs here.</h1><p>A place for the things you build, the problems you solve, and the people who inspire you.</p><div className="auth-story-bottom">Made for curious minds.<br/><strong>Built by students.</strong></div></div><section className="auth-panel"><h2>{signup?'Make room for your ideas.':'Welcome back.'}</h2><p>{signup?'Create your student account to start sharing.':'Sign in and pick up where you left off.'}</p><form onSubmit={submit}><ErrorMessage message={error}/>{signup&&<label>Full name<input name="name" autoComplete="name" required minLength={2} maxLength={80} placeholder="Your name"/></label>}<label>Email address<input name="email" type="email" autoComplete="email" required placeholder="you@college.edu"/></label><label>Password<input name="password" type="password" autoComplete={signup?'new-password':'current-password'} required minLength={signup?10:1} maxLength={128} placeholder={signup?'At least 10 characters':'Enter your password'}/></label>{signup&&<div className="form-grid"><label>Department<select name="department" required>{departments.map(d=><option key={d}>{d}</option>)}</select></label><label>Semester<select name="semester">{Array.from({length:12},(_,i)=><option key={i} value={i+1}>Semester {i+1}</option>)}</select></label></div>}<button className="button primary full" disabled={busy}>{busy?'One moment…':signup?'Create account':'Sign in'}<ArrowRight size={18}/></button></form><div className="auth-switch">{signup?'Already have an account?':'New to ProjectHub?'} <Link href={signup?'/login':'/signup'}>{signup?'Sign in':'Create an account'}</Link></div><p className="auth-note">Faculty and admin access is assigned by your administrator.</p></section></div>}
+import {ArrowRight, Box, Eye, EyeOff} from 'lucide-react';
+import {api, departments, isAbortError} from '@/lib/api';
+import {authHref, safeReturnPath} from '@/lib/auth-navigation';
+import {useApp, ErrorMessage} from './shell';
+
+export function AuthForm({signup = false}: {signup?: boolean}) {
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [next, setNext] = useState('/workspace');
+  const request = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  const errorSummary = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const {refresh} = useApp();
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; request.current?.abort(); request.current = null; };
+  }, []);
+  useEffect(() => { setNext(safeReturnPath(new URLSearchParams(window.location.search).get('next'))); }, []);
+  useEffect(() => { if (error) errorSummary.current?.focus(); }, [error]);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (request.current) return;
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    if (signup && String(values.name).trim().length < 2) {
+      setError('Enter your full name using at least 2 characters.');
+      return;
+    }
+    const controller = new AbortController();
+    request.current = controller;
+    const source = `${window.location.pathname}${window.location.search}`;
+    const destination = safeReturnPath(new URLSearchParams(window.location.search).get('next'));
+    const current = () => mounted.current && request.current === controller && !controller.signal.aborted
+      && `${window.location.pathname}${window.location.search}` === source;
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/auth/${signup ? 'signup' : 'login'}`, {
+        method: 'POST',
+        signal: controller.signal,
+        body: JSON.stringify({
+          ...values,
+          email: String(values.email).trim(),
+          ...(signup ? {name: String(values.name).trim(), semester: Number(values.semester)} : {}),
+        }),
+      });
+      if (!current()) return;
+      await refresh(controller.signal);
+      if (current()) router.replace(destination);
+    } catch (failure) {
+      if (current() && !isAbortError(failure)) setError((failure as Error).message);
+    } finally {
+      if (request.current === controller) {
+        request.current = null;
+        if (mounted.current) setBusy(false);
+      }
+    }
+  }
+
+  return <div className="auth-layout">
+    <div className="auth-story" aria-hidden="true">
+      <Box size={40}/><p className="auth-story-title">Your next big idea<br/>belongs here.</p>
+      <p>A place for the things you build, the problems you solve, and the people who inspire you.</p>
+      <div className="auth-story-bottom">Made for curious minds.<br/><strong>Built by students.</strong></div>
+    </div>
+    <section className="auth-panel" aria-labelledby="auth-title">
+      <h1 id="auth-title">{signup ? 'Make room for your ideas.' : 'Welcome back.'}</h1>
+      <p>{signup ? 'Create your student account to start sharing.' : 'Sign in and pick up where you left off.'}</p>
+      <form onSubmit={submit} aria-busy={busy}>
+        <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage id="auth-error" message={error}/></div>
+        <fieldset className="form-fields" disabled={busy}>
+          {signup && <label>Full name<input name="name" autoComplete="name" required minLength={2} maxLength={80} placeholder="Your name"/></label>}
+          <label>Email address<input name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} required maxLength={254} placeholder="you@college.edu"/></label>
+          <label htmlFor="auth-password">Password</label>
+          <div className="password-field">
+            <input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={signup ? 'new-password' : 'current-password'} required minLength={signup ? 10 : 1} maxLength={128} aria-describedby={signup ? 'password-requirements' : undefined} placeholder={signup ? 'Create a password' : 'Enter your password'}/>
+            <button type="button" className="icon-button" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} aria-controls="auth-password" onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={18} aria-hidden="true"/> : <Eye size={18} aria-hidden="true"/>}</button>
+          </div>
+          {signup && <p className="field-hint" id="password-requirements">Use 10–128 characters. You can paste a password from your password manager.</p>}
+          {signup && <div className="form-grid">
+            <label>Department<select name="department" required defaultValue=""><option value="" disabled>Choose department</option>{departments.map(department => <option key={department}>{department}</option>)}</select></label>
+            <label>Semester<select name="semester" required defaultValue=""><option value="" disabled>Choose semester</option>{Array.from({length: 12}, (_, index) => <option key={index} value={index + 1}>Semester {index + 1}</option>)}</select></label>
+          </div>}
+          <button className="button primary full" type="submit" disabled={busy}>{busy ? signup ? 'Creating your account…' : 'Signing in…' : signup ? 'Create account' : 'Sign in'}<ArrowRight size={18} aria-hidden="true"/></button>
+        </fieldset>
+      </form>
+      <div className="auth-switch">{signup ? 'Already have an account?' : 'New to ProjectHub?'} <Link href={authHref(!signup, next)}>{signup ? 'Sign in' : 'Create an account'}</Link></div>
+      <p className="auth-note">Faculty and admin access is assigned by your administrator.</p>
+    </section>
+  </div>;
+}

@@ -1,10 +1,191 @@
 'use client';
-import {useEffect,useState} from 'react';
+
+import {useEffect, useRef, useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
-import {ArrowLeft,Upload,X,Save,Send,Trash2} from 'lucide-react';
-import {api,Project,departments,projectTypes} from '@/lib/api';
-import {Guard,useApp,ErrorMessage,Loading} from './shell';
-type Form={title:string;description:string;department:string;semester:string;type:string;techStack:string;teamMembers:string;githubUrl:string;demoUrl:string};
-export function ProjectEditor({id}:{id?:string}){return <Guard><Editor id={id}/></Guard>}
-function Editor({id}:{id?:string}){const {user,notify}=useApp();const router=useRouter();const [form,setForm]=useState<Form>({title:'',description:'',department:user?.department||departments[0],semester:String(user?.semester||1),type:projectTypes[0],techStack:'',teamMembers:user?.name||'',githubUrl:'',demoUrl:''});const [screenshots,setScreenshots]=useState<string[]>([]);const [loading,setLoading]=useState(!!id);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [uploading,setUploading]=useState(false);const [original,setOriginal]=useState<Project|null>(null);useEffect(()=>{if(id)api<Project>(`/projects/${id}`).then(p=>{setOriginal(p);setForm({title:p.title,description:p.description,department:p.department,semester:String(p.semester),type:p.type,techStack:p.techStack.join(', '),teamMembers:p.teamMembers.join(', '),githubUrl:p.githubUrl||'',demoUrl:p.demoUrl||''});setScreenshots(p.screenshots)}).catch(e=>setError(e.message)).finally(()=>setLoading(false))},[id]);const update=(key:keyof Form,value:string)=>setForm(prev=>({...prev,[key]:value}));async function save(e:React.FormEvent<HTMLFormElement>){e.preventDefault();const submit=(e.nativeEvent as SubmitEvent).submitter?.getAttribute('value')==='submit';setBusy(true);setError('');try{const payload={...form,semester:Number(form.semester),techStack:form.techStack.split(',').map(x=>x.trim()).filter(Boolean),teamMembers:form.teamMembers.split(',').map(x=>x.trim()).filter(Boolean),screenshots};const saved=await api<Project>(id?`/projects/${id}`:'/projects',{method:id?'PATCH':'POST',body:JSON.stringify(payload)});if(submit){try{await api(`/projects/${saved.id}/submit`,{method:'POST'})}catch(e){notify('Draft saved. Submission needs attention.');router.replace(`/projects/${saved.id}/edit`);throw e}}notify(submit?'Project submitted for review.':'Draft saved.');router.push('/workspace')}catch(e){setError((e as Error).message)}finally{setBusy(false)}}async function upload(files:FileList|null){if(!files)return;setUploading(true);setError('');try{if(screenshots.length+files.length>8)throw new Error('You can add up to 8 screenshots.');for(const file of Array.from(files)){if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw new Error('Please choose PNG, JPEG or WebP images.');if(file.size>5*1024*1024)throw new Error('Each screenshot must be 5 MB or smaller.');const body=new FormData();body.append('file',file);const data=await api<{url:string}>('/uploads',{method:'POST',body});setScreenshots(prev=>[...prev,data.url])}}catch(e){setError((e as Error).message)}finally{setUploading(false)}}async function remove(){if(!id||!window.confirm('Delete this project? This cannot be undone.'))return;setBusy(true);try{await api(`/projects/${id}`,{method:'DELETE'});notify('Project deleted.');router.push('/workspace')}catch(e){setError((e as Error).message);setBusy(false)}}if(loading)return <Loading/>;if(original&&original.ownerId!==user?.id)return <div className="empty"><h1>You can only edit your own projects.</h1></div>;return <div className="page-container editor-page"><Link className="back-link" href="/workspace"><ArrowLeft size={16}/>My workspace</Link><div className="page-title"><div><h1>{id?'Refine your project.':'Bring your idea to life.'}</h1><p>{id?'Keep your project story clear, current, and complete.':'Tell the story behind what you built.'}</p></div></div><form onSubmit={save}><div className="editor-grid"><section className="form-panel"><h2>Project details</h2><ErrorMessage message={error}/>{original&&['APPROVED','PENDING'].includes(original.status)&&<div className="review-note">Saving edits returns this project to draft. Submit it again when ready.</div>}<label>Project title<input name="title" required minLength={3} maxLength={120} value={form.title} onChange={e=>update('title',e.target.value)} placeholder="Give your project a clear, memorable name"/></label><label>Description<textarea name="description" required minLength={20} maxLength={10000} rows={7} value={form.description} onChange={e=>update('description',e.target.value)} placeholder="What problem does it solve? What did you build, and what did you learn?"/><small>At least 20 characters. Make it understandable to someone seeing it for the first time.</small></label><div className="form-grid"><label>Department<select value={form.department} onChange={e=>update('department',e.target.value)}>{departments.map(d=><option key={d}>{d}</option>)}</select></label><label>Semester<select value={form.semester} onChange={e=>update('semester',e.target.value)}>{Array.from({length:12},(_,i)=><option key={i} value={i+1}>Semester {i+1}</option>)}</select></label></div><label>Project type<select value={form.type} onChange={e=>update('type',e.target.value)}>{projectTypes.map(t=><option key={t}>{t}</option>)}</select></label><label>Technologies<input value={form.techStack} required onChange={e=>update('techStack',e.target.value)} placeholder="React, Node.js, PostgreSQL"/><small>Separate each technology with a comma.</small></label><label>Team members<input value={form.teamMembers} onChange={e=>update('teamMembers',e.target.value)} placeholder="Your name, Teammate name"/><small>Separate each name with a comma.</small></label><div className="form-grid"><label>GitHub repository <span className="optional">(optional)</span><input type="url" value={form.githubUrl} onChange={e=>update('githubUrl',e.target.value)} placeholder="https://github.com/…"/></label><label>Live demo <span className="optional">(optional)</span><input type="url" value={form.demoUrl} onChange={e=>update('demoUrl',e.target.value)} placeholder="https://…"/></label></div></section><aside className="editor-side"><section className="form-panel"><h2>Show your work</h2><p>A good screenshot helps people understand your idea at a glance.</p><label className="upload-area"><Upload size={26}/><strong>{uploading?'Uploading…':'Choose screenshots'}</strong><span>PNG, JPEG or WebP · up to 5 MB each</span><input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e=>upload(e.target.files)} disabled={uploading||busy}/></label><div className="upload-previews">{screenshots.map((src,i)=><div key={`${src}-${i}`}><img src={src} alt={`Screenshot ${i+1}`}/><button type="button" className="icon-button" aria-label={`Remove screenshot ${i+1}`} onClick={()=>setScreenshots(screenshots.filter((_,n)=>n!==i))}><X size={16}/></button></div>)}</div></section><section className="editor-help"><h3>Make it yours.</h3><p>Use your own screenshots and credit everyone who helped. Your project will be reviewed by faculty before it appears in Explore.</p><p>You can save a draft and come back anytime.</p></section>{id&&<button type="button" className="button danger" disabled={busy} onClick={remove}><Trash2 size={16}/>Delete project</button>}</aside></div><div className="editor-footer"><Link href="/workspace" className="button">Cancel</Link><div><button name="action" value="draft" className="button" disabled={busy||uploading}><Save size={16}/>{busy?'Saving…':'Save draft'}</button><button name="action" value="submit" className="button primary" disabled={busy||uploading}><Send size={16}/>Submit for review</button></div></div></form></div>}
+import {ArrowLeft, Save, Send, Trash2} from 'lucide-react';
+import {api, ApiError, Project, departments, projectTypes, isAbortError} from '@/lib/api';
+import {projectPayload, ProjectForm, projectToForm, validateProjectForm} from '@/lib/project-form';
+import {Guard, useApp, ErrorMessage, Loading} from './shell';
+import {ScreenshotEditor} from './screenshot-editor';
+
+type SaveAction = 'draft' | 'submit' | 'delete';
+
+export function ProjectEditor({id}: {id?: string}) { return <Guard><Editor key={id ?? 'new'} id={id}/></Guard>; }
+
+function Editor({id}: {id?: string}) {
+  const {user, notify} = useApp();
+  const router = useRouter();
+  const [form, setForm] = useState<ProjectForm>({title: '', description: '', department: user?.department || departments[0], semester: String(user?.semester || 1), type: projectTypes[0], techStack: '', teamMembers: user?.name || '', githubUrl: '', demoUrl: ''});
+  const [screenshots, setScreenshots] = useState<string[]>([]);
+  const [loading, setLoading] = useState(Boolean(id));
+  const [loadError, setLoadError] = useState('');
+  const [loadId, setLoadId] = useState(id);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState<SaveAction | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [original, setOriginal] = useState<Project | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [savedDraft, setSavedDraft] = useState(false);
+  const pending = useRef(false);
+  const mounted = useRef(true);
+  const mutation = useRef<AbortController | null>(null);
+  const savedId = useRef(id);
+  const savedVersion = useRef<number | undefined>(undefined);
+  const errorSummary = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; mutation.current?.abort(); };
+  }, []);
+
+  useEffect(() => {
+    if (!loadId) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError('');
+    api<Project>(`/projects/${loadId}`, {signal: controller.signal}).then(project => {
+      if (controller.signal.aborted) return;
+      setOriginal(project);
+      savedId.current = project.id;
+      savedVersion.current = project.version;
+      setForm(projectToForm(project));
+      setScreenshots(project.screenshots);
+    }).catch(failure => {
+      if (!controller.signal.aborted && !isAbortError(failure)) setLoadError(failure.message);
+    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [loadId, retry]);
+
+  useEffect(() => { if (error) errorSummary.current?.focus(); }, [error]);
+  const update = (key: keyof ProjectForm, value: string) => setForm(previous => ({...previous, [key]: value}));
+
+  async function save(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pending.current || uploading) return;
+    const validation = validateProjectForm(form);
+    if (validation) { setError(validation); return; }
+    const action = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'submit' ? 'submit' : 'draft';
+    pending.current = true;
+    const controller = new AbortController();
+    mutation.current = controller;
+    setBusy(action);
+    setError('');
+    setSavedDraft(false);
+    setConflict(false);
+    try {
+      const currentId = savedId.current;
+      const saved = await api<Project>(currentId ? `/projects/${currentId}` : '/projects', {
+        method: currentId ? 'PATCH' : 'POST', body: JSON.stringify({...projectPayload(form, screenshots), ...(currentId ? {expectedVersion: savedVersion.current} : {})}), signal: controller.signal,
+      });
+      if (!mounted.current || controller.signal.aborted) return;
+      // Keep the created ID before submission. Retrying a failed second step
+      // must update this draft instead of creating another project.
+      savedId.current = saved.id;
+      savedVersion.current = saved.version;
+      setOriginal(saved);
+      if (action === 'submit') {
+        try {
+          await api(`/projects/${saved.id}/submit`, {method: 'POST', body: JSON.stringify({expectedVersion: saved.version}), signal: controller.signal});
+          if (!mounted.current || controller.signal.aborted) return;
+        } catch (failure) {
+          if (!mounted.current || isAbortError(failure)) return;
+          setSavedDraft(true);
+          setConflict(failure instanceof ApiError && failure.status === 409);
+          setError(`Your draft was saved, but it could not be submitted: ${(failure as Error).message}`);
+          return;
+        }
+      }
+      notify(action === 'submit' ? 'Project submitted for review.' : 'Draft saved.');
+      router.push('/workspace');
+    } catch (failure) {
+      if (mounted.current && !isAbortError(failure)) {
+        setError((failure as Error).message);
+        setConflict(failure instanceof ApiError && failure.status === 409);
+      }
+    } finally {
+      pending.current = false;
+      mutation.current = null;
+      if (mounted.current) setBusy(null);
+    }
+  }
+
+  async function remove() {
+    const currentId = savedId.current;
+    if (!currentId || pending.current || uploading || !window.confirm('Delete this project? This cannot be undone.')) return;
+    pending.current = true;
+    const controller = new AbortController();
+    mutation.current = controller;
+    setBusy('delete');
+    setError('');
+    try {
+      await api(`/projects/${currentId}`, {method: 'DELETE', body: JSON.stringify({expectedVersion: savedVersion.current}), signal: controller.signal});
+      if (!mounted.current || controller.signal.aborted) return;
+      notify('Project deleted.');
+      router.push('/workspace');
+    } catch (failure) {
+      if (mounted.current && !isAbortError(failure)) {
+        setError((failure as Error).message);
+        setConflict(failure instanceof ApiError && failure.status === 409);
+      }
+    } finally {
+      pending.current = false;
+      mutation.current = null;
+      if (mounted.current) setBusy(null);
+    }
+  }
+
+  function reloadLatest() {
+    if (!savedId.current || pending.current || uploading) return;
+    if (!window.confirm('Reload the latest project? This replaces your unsaved changes with the current server version.')) return;
+    setError('');
+    setConflict(false);
+    setSavedDraft(false);
+    setLoadId(savedId.current);
+    setRetry(value => value + 1);
+  }
+
+  if (loading) return <Loading message="Loading your project…"/>;
+  if (loadError) return <div className="page-container"><Link className="back-link" href="/workspace"><ArrowLeft size={16}/>My workspace</Link><h1>We couldn’t load this project.</h1><div className="load-recovery"><ErrorMessage message={loadError}/><button className="button primary" onClick={() => setRetry(value => value + 1)}>Try again</button></div></div>;
+  if (original && original.ownerId !== user?.id) return <div className="empty"><h1>You can only edit your own projects.</h1><p>Return to your workspace to choose one of your projects.</p><Link className="button" href="/workspace">My workspace</Link></div>;
+
+  return <div className="page-container editor-page">
+    <Link className="back-link" href="/workspace" aria-disabled={Boolean(busy) || uploading} onClick={event => { if (pending.current || uploading) event.preventDefault(); }}><ArrowLeft size={16} aria-hidden="true"/>My workspace</Link>
+    <div className="page-title"><div><h1>{savedId.current ? 'Refine your project.' : 'Bring your idea to life.'}</h1><p>{savedId.current ? 'Keep your project story clear, current, and complete.' : 'Tell the story behind what you built.'}</p></div></div>
+    <form onSubmit={save} aria-busy={Boolean(busy)}>
+      <fieldset className="editor-fields" disabled={Boolean(busy)}>
+        <div className="editor-grid">
+          <section className="form-panel">
+            <h2>Project details</h2>
+            <div ref={errorSummary} tabIndex={-1} className="form-error-summary"><ErrorMessage message={error}/>{conflict && <div className="conflict-recovery"><p>Your edits are still here. Copy any changes you want to keep before loading the latest version.</p><button type="button" className="button" onClick={reloadLatest}>Reload latest project</button></div>}{savedDraft && <Link className="text-link" href="/workspace">Find your saved draft in My workspace</Link>}</div>
+            {original && ['APPROVED', 'PENDING'].includes(original.status) && <div className="review-note">Saving edits returns this project to draft and removes it from Explore until it is approved again.</div>}
+            <label>Project title<input name="title" required minLength={3} maxLength={120} value={form.title} onChange={event => update('title', event.target.value)} placeholder="Give your project a clear, memorable name"/></label>
+            <label><span id="description-label">Description</span><textarea aria-labelledby="description-label" name="description" required minLength={20} maxLength={20000} rows={7} value={form.description} onChange={event => update('description', event.target.value)} aria-describedby="description-hint" placeholder="What problem does it solve? What did you build, and what did you learn?"/><small id="description-hint">20–20,000 characters. Make it understandable to someone seeing it for the first time. {form.description.length.toLocaleString()} used.</small></label>
+            <div className="form-grid">
+              <label>Department<select value={form.department} onChange={event => update('department', event.target.value)}>{!departments.includes(form.department) && <option>{form.department}</option>}{departments.map(department => <option key={department}>{department}</option>)}</select></label>
+              <label>Semester<select value={form.semester} onChange={event => update('semester', event.target.value)}>{Array.from({length: 12}, (_, index) => <option key={index} value={index + 1}>Semester {index + 1}</option>)}</select></label>
+            </div>
+            <label>Project type<select value={form.type} onChange={event => update('type', event.target.value)}>{!projectTypes.includes(form.type) && <option>{form.type}</option>}{projectTypes.map(type => <option key={type}>{type}</option>)}</select></label>
+            <label><span id="technologies-label">Technologies</span><input aria-labelledby="technologies-label" value={form.techStack} required maxLength={840} onChange={event => update('techStack', event.target.value)} aria-describedby="technologies-hint" placeholder="React, Node.js, PostgreSQL"/><small id="technologies-hint">Separate technologies with commas. Up to 20 items, 40 characters each.</small></label>
+            <label><span id="team-label">Team members</span><input aria-labelledby="team-label" value={form.teamMembers} maxLength={1640} onChange={event => update('teamMembers', event.target.value)} aria-describedby="team-hint" placeholder="Your name, Teammate name"/><small id="team-hint">Separate names with commas. Up to 20 people, 80 characters each. Listed names will be public after approval.</small></label>
+            <div className="form-grid">
+              <label>GitHub repository <span className="optional">(optional)</span><input type="url" maxLength={2000} value={form.githubUrl} onChange={event => update('githubUrl', event.target.value)} placeholder="https://github.com/…"/></label>
+              <label>Live demo <span className="optional">(optional)</span><input type="url" maxLength={2000} value={form.demoUrl} onChange={event => update('demoUrl', event.target.value)} placeholder="https://…"/></label>
+            </div>
+          </section>
+          <aside className="editor-side">
+            <ScreenshotEditor screenshots={screenshots} onChange={setScreenshots} onUploadingChange={setUploading} disabled={Boolean(busy)}/>
+            <section className="editor-help"><h3>Make it yours.</h3><p>Use your own screenshots and credit everyone who helped. Your project will be reviewed by faculty before it appears in Explore.</p><p>Save draft keeps your work private. Submit for review sends it to faculty.</p></section>
+            {savedId.current && <button type="button" className="button danger" disabled={Boolean(busy) || uploading} onClick={remove}><Trash2 size={16} aria-hidden="true"/>{busy === 'delete' ? 'Deleting…' : 'Delete project'}</button>}
+          </aside>
+        </div>
+      </fieldset>
+      <div className="editor-footer">{busy || uploading ? <button type="button" className="button" disabled>Cancel</button> : <Link href="/workspace" className="button">Cancel</Link>}<div>
+        <button type="submit" name="action" value="draft" className="button" disabled={Boolean(busy) || uploading}><Save size={16} aria-hidden="true"/>{busy === 'draft' ? 'Saving draft…' : 'Save draft'}</button>
+        <button type="submit" name="action" value="submit" className="button primary" disabled={Boolean(busy) || uploading}><Send size={16} aria-hidden="true"/>{busy === 'submit' ? 'Submitting…' : 'Submit for review'}</button>
+      </div></div>
+      <span role="status" className="sr-only">{busy === 'draft' ? 'Saving your draft' : busy === 'submit' ? 'Saving and submitting your project' : uploading ? 'Uploading screenshots' : ''}</span>
+    </form>
+  </div>;
+}

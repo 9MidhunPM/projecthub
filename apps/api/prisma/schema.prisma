@@ -17,6 +17,10 @@ enum ProjectStatus {
  CHANGES_REQUESTED
  HIDDEN
 }
+enum UploadState {
+ PENDING
+ READY
+}
 model User {
  id String @id @default(cuid())
  email String @unique
@@ -38,6 +42,7 @@ model Session {
  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
  expiresAt DateTime
  @@index([expiresAt])
+ @@index([userId,expiresAt])
 }
 model Project {
  id String @id @default(cuid())
@@ -54,6 +59,7 @@ model Project {
  status ProjectStatus @default(DRAFT)
  feedback String @default("")
  views Int @default(0)
+ version Int @default(0)
  ownerId String
  owner User @relation(fields:[ownerId],references:[id],onDelete:Cascade)
  createdAt DateTime @default(now())
@@ -63,6 +69,10 @@ model Project {
  viewEvents ViewEvent[]
  @@index([status,createdAt])
  @@index([department,semester])
+ @@index([ownerId,updatedAt])
+ @@index([status,updatedAt])
+ @@index([techStack],type:Gin)
+ @@index([screenshots],type:Gin)
 }
 model Like {
  userId String
@@ -70,6 +80,7 @@ model Like {
  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
  project Project @relation(fields:[projectId],references:[id],onDelete:Cascade)
  @@id([userId,projectId])
+ @@index([projectId])
 }
 model Bookmark {
  userId String
@@ -77,6 +88,7 @@ model Bookmark {
  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
  project Project @relation(fields:[projectId],references:[id],onDelete:Cascade)
  @@id([userId,projectId])
+ @@index([projectId])
 }
 model ViewEvent {
  projectId String
@@ -92,10 +104,13 @@ model Audit {
  targetId String
  details String
  createdAt DateTime @default(now())
+ @@index([createdAt])
 }
 model Upload {
  filename String @id
  ownerId String
  createdAt DateTime @default(now())
+ bytes BigInt?
+ state UploadState @default(READY)
  @@index([ownerId])
 }

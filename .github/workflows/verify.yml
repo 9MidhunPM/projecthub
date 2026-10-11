@@ -1,0 +1,111 @@
+name: Verify ProjectHub
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'improvement/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  source-checks:
+    name: Node ${{ matrix.node }} types, unit tests, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run security:audit
+      - run: npm run build
+
+  database-and-proxy:
+    name: PostgreSQL 17 and production proxy regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: projecthub_test
+          POSTGRES_PASSWORD: ci-only-local-password
+          POSTGRES_DB: projecthub_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U projecthub_test -d projecthub_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Configure the isolated CI database URL
+        run: echo "TEST_DATABASE_URL=postgresql://projecthub_test:ci-only-local-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/projecthub_test?schema=public" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm run db:generate
+      - name: Migrate the isolated CI database
+        run: DATABASE_URL="$TEST_DATABASE_URL" npm run db:migrate
+      - run: npm run test:integration
+      - run: npm run test:fullstack
+
+  compose-config:
+    name: Container configurations and isolated Docker runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker compose -f compose.yaml config --quiet
+        env:
+          POSTGRES_PASSWORD: ci-only-placeholder
+      - run: docker compose -f compose.yaml -f compose.dev.yaml config --quiet
+        env:
+          POSTGRES_PASSWORD: ci-only-placeholder
+      - run: docker compose -f compose.dokploy.yaml config --quiet
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Build and smoke-test the isolated Compose runtime
+        run: node scripts/docker-smoke.cjs
+
+  credential-recipe:
+    name: Isolated Dokploy recipe credential lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Verify the port-free recipe with disposable credential volumes
+        run: node scripts/dokploy-smoke.cjs

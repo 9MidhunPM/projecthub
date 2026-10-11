@@ -1,51 +1,96 @@
 # Validation record
 
-Build preparation dated 2026-10-09. Status here records checks actually reported during this build, not a production certification. Re-run checks after edits.
+Updated 2026-10-10. This records reproducible development checkpoints, not production certification. Source work continues between checkpoints; rerun the complete gates against the exact release candidate. Commands and safety boundaries are in [TESTING.md](TESTING.md).
 
-## Completed
+## Baseline and new coverage
 
-- Root npm workspace install: succeeded; 228 packages installed and `package-lock.json` generated.
-- Backend TypeScript build and type check: passed.
-- Backend automated tests: 4 passed, 0 skipped, against a real PostgreSQL 17.6 process in the isolated build environment.
-- Integration coverage includes signup, ownership, origin protection, upload byte validation and private-image visibility, moderation/publication, feedback, role restrictions, unsafe URL rejection, foreign-upload rejection, idempotent likes/bookmarks, per-day view de-duplication, and logout revocation. Assertions are the source of truth; see `apps/api/test/`.
-- Root `package.json` / lockfile JSON and Compose YAML parsed successfully.
-- All six seeded screenshot example paths exist in `apps/web/public/examples/`.
+At the restored `081db983348c76672eece7b8cd3199713bbe5c03` baseline, dependency installation, Prisma generation, and both type checks passed. API tests reported seven passes and one skipped database test. The frontend test command only performed type checking, and six deterministic credential-bootstrap tests passed.
 
-The isolated runner provided Node.js 24.19.0; container recipes target Node.js 22 LTS. PostgreSQL was launched from a registry-distributed embedded PostgreSQL package solely for testing, outside this source distribution. Deployment uses the official PostgreSQL Compose image.
+The repository now includes explicit unit/DOM/operations runners, a fail-closed test-database URL guard, disposable PostgreSQL lifecycle tooling, the previously missing real full-stack HTTP regression suite, and CI configuration. Unit runs remove inherited database URLs; requested database runs fail rather than silently skip when their explicit test URL is absent.
 
-## Pending / not established by this record
+## Earlier development checkpoints
 
-- Frontend browser interaction, responsive rendering, accessibility, visual fidelity, and browser console checks remain unverified due to the browser execution restrictions described below.
-- Docker image builds and Compose startup: not run; Docker was unavailable in the build environment.
-- Dokploy deployment, public HTTPS, production volumes, backups/restores, live email/SSO, load testing, and a security audit: not performed.
+- Node 24.19.0/npm 11.9.0 was used for the initial install and iterative type/unit/production-build/HTTP checks.
+- Official Node 22.23.3/npm 10.9.9 was downloaded from nodejs.org and its archive SHA-256 was checked against the official release manifest. Both workspace type checks passed. The measured unit checkpoint reported **37 API, 54 frontend, and 33 operations tests passed**, zero failures/skips.
+- Real PostgreSQL 17.11 was launched from official Debian distribution packages in a disposable, loopback-only cluster. Fresh migrations and **three integration tests passed**, zero skips, under Node 22. These include real API workflows, migration preservation of existing project data, and bounded concurrent session issuance.
+- The production full-stack HTTP suite passed under Node 24 and Node 22. An early Node 22 checkpoint after mandatory client-version support reported **13 tests passed** (12 HTTP groups plus their parent), zero failures/skips. It built both apps, copied the exact standalone/static/public layout used by `Dockerfile.web` outside the source checkout, and ran the generated frontend server against the real compiled API and PostgreSQL.
+- HTTP coverage includes 11 page routes, example images, referenced built JavaScript/CSS, frontend security headers, database readiness through the same-origin proxy, session-cookie forwarding, role boundaries, real PNG-to-WebP uploads, draft/image privacy, feedback/resubmission/approval, combined gallery filters, likes/bookmarks/daily views, role audit records, hiding, and logout revocation. Versioned mutations use the preceding response version; missing/stale editor writes and stale deletion are rejected without overwriting or deleting the current record.
+- The copied frontend runtime excluded the API source and DOM-testing dependencies. Built JS/CSS requests returned successful immutable responses. A separate local `npm start`-equivalent smoke verified the standalone startup helper and public assets.
+- Process cleanup regression tests cover timeouts, cancellation, a resistant same-group descendant after its wrapper exits, and a detached build that must finish cancellation before its owner exits. The PostgreSQL helper was checked on both a successful run and an intentional failing command; its temporary cluster was removed.
+- `npm run security:audit` passed its explicit policy with five version/path-scoped temporary advisory exceptions. This is **not** a zero-known-vulnerability result. See [dependency review](DEPENDENCY-AUDIT.md), including the 2026-11-09 review expiry.
+- Compose YAML and workflow YAML parsed locally. Official actionlint 1.7.12 validated the corrected GitHub Actions expressions and job contexts; its release archive digest was verified before use. API/web readiness configuration, read-only repository CI permissions, and immutable action pins were inspected. Subsequent hosted execution is recorded at the verified application checkpoint below.
 
-The manual checklist is a repeatable acceptance procedure, not evidence that all its items passed. Frontend `npm test` is TypeScript checking, not an automated browser suite. API integration tests skip without `DATABASE_URL`; this build's reported database-backed run did not skip them.
+Counts describe the checkpoints above, not a promise that later commits have the same counts. Assertions in the checked-in test files are the source of truth. Before publishing or releasing, run the full commands again after all review fixes and concurrent changes are complete.
 
-## Fullstack HTTP acceptance run
+## Browser and container limitations
 
-Completed 2026-10-09 against a fresh real PostgreSQL database, migrated and seeded, compiled NestJS API, and Next.js development server. Requests used the real same-origin Next proxy at `http://localhost:3000`, including browser-equivalent Origin and session cookies. **13 test groups passed; 0 failed.**
+A fresh installed-Chromium check on 2026-10-10 failed before page creation with `process_singleton_posix.cc: socket() failed: Operation not permitted`. The execution environment prohibits the required Unix socket. No restriction was bypassed, and **no real-browser screenshot or rendered-browser workflow passed in this local environment**.
 
-- All 11 exercised Next routes returned valid ProjectHub HTML without compilation-error documents.
-- Gallery listing, free-text search, department/semester/type/technology filters, popularity sort, pagination, empty results, and all seeded screenshot assets.
-- Student login, logout, session revocation, bookmarks, likes/unlikes, collection persistence, and profile updates.
-- Invalid self-role escalation rejected; new signup creates only student accounts and rejects a forged admin field.
-- Real PNG upload normalized to WebP, project draft creation/editing, and draft submission.
-- Anonymous users and unrelated students cannot access private draft details or uploaded screenshots; unrelated students cannot edit another owner's project.
-- Faculty request changes with mandatory feedback; student sees feedback and resubmits; faculty approval makes both project and screenshot public.
-- Student/faculty administrative restrictions, admin role changes, self-demotion prevention, and corresponding audit records.
-- Hiding an approved project removes it from public results and protects its uploaded screenshot again.
+React/jsdom tests provide useful interaction coverage, and production HTTP checks prove server/proxy workflows, but neither establishes responsive layout, visual fidelity, browser-console health, real keyboard behavior, or screen-reader accessibility. Use [manual QA](MANUAL-QA.md) in a supported desktop/mobile browser before release.
 
-Frontend production build and TypeScript check were separately reported successful by the frontend implementation worker.
+Docker is unavailable in the local execution environment. Hosted checks below cover both ordinary Compose and the unchanged, port-free `compose.dokploy.yaml` recipe with disposable test volumes, including secret initialization, credential permissions, and PostgreSQL authentication/privilege drop. The local standalone smoke alone does not establish container execution. No check connects to a real Dokploy instance or validates its ingress, HTTPS, automatic deployment behavior, or intended host.
 
-## Browser execution limitation
+The fixture-only recovery rehearsal uses a quiescent fictional database/upload pair. It is not a production restore or a live cross-store snapshot strategy; it explicitly demonstrates that old session rows can resurrect revoked sessions. See [recovery boundaries](RECOVERY-REHEARSAL.md).
 
-A comprehensive desktop/mobile Playwright workflow was prepared, but **no browser workflow passed and no rendered screenshots were captured**. Installed Chromium failed before page creation because the environment prohibited a required local Unix socket (`process_singleton_posix.cc: socket() failed: Operation not permitted`). Reviewed elevated execution produced the same failure. The supported cloud browser could not reach the isolated server (`ERR_CONNECTION_REFUSED`); recovery was then rejected by its URL policy. These restrictions were not bypassed. No Firefox or headless-shell alternative was installed.
+No production database, public deployment, new production credential, HTTPS configuration, production backup/restore, representative production load test, institutional privacy rollout, or full independent security audit was performed by these checks. Deployment remains a separate approval-required operation.
 
-Consequently, HTTP checks prove application routes and server workflows, not client-side interaction correctness, responsive layout, absence of browser-console errors, or fidelity to the concept images. The concept images are design references, not screenshots of the running product. Run the manual acceptance checklist in a supported local browser before release.
+## Verified application checkpoint: 2026-10-10
 
-## Deployment credential bootstrap checks
+This is the 83-commit **application checkpoint**, not a claim that the sprint is complete or that later changes are covered. The following immutable revisions contain the same application tree:
 
-- `node --check` passed for both container-side credential scripts.
-- `node --test docker/secret-bootstrap.test.cjs`: 6 passed, 0 failed, using deterministic in-memory fixtures. No actual database credential was generated during these tests.
-- Dedicated Dokploy Compose YAML parsed; five services, no host ports, required initialization/migration dependency gates, read-only secret consumers, and absence of credential values in configuration were checked.
-- Actual container execution, UID ownership behavior, and approved public deployment remain runtime checks; mocked tests do not establish those outcomes.
+- Local checkpoint: `2669fde477b93edf5719e78aa63506b36d5ed1c2`
+- Published checkpoint: `92e5b15f6401e7220a94b04b059841746ccccd2c`
+- Exact-head workflow: [Verify ProjectHub, run 38063198900](https://github.com/9MidhunPM/projecthub/actions/runs/38063198900)
+
+### Local checks
+
+Node 24.19.0, npm 11.9.0, and PostgreSQL 17.11 were used. These commands completed successfully in sequence; set `PG_BIN` to the installed PostgreSQL 17 binary directory if discovery needs help:
+
+```sh
+npm run db:generate
+npm run typecheck
+npm test
+npm run security:audit
+npm run test:db -- npm run test:integration
+npm run test:db -- npm run test:fullstack
+npm run test:restore
+```
+
+Results at this checkpoint: 303 fast tests (127 API, 127 frontend, 49 operations), 26 real-database tests, 16 production-proxy tests, and 6 fixture-recovery tests passed, with zero failures or skips. The full-stack gate built both apps. Each database command used a fresh disposable cluster and removed it afterward. The audit passed with the five reviewed exceptions, not zero known advisories.
+
+These counts identify this checkpoint only. Use the commands and test assertions, rather than these historical counts, to validate a later revision. The documentation commit recording this evidence is intentionally not its own application checkpoint.
+
+### Hosted checks
+
+The exact-head workflow above completed successfully, observed at **15:24 UTC on 2026-10-10**. All four jobs passed:
+
+- Node 22 types/unit/audit/build: Node 22.23.3 and npm 10.9.9
+- Node 24 types/unit/audit/build: Node 24.21.0 and npm 11.19.0
+- PostgreSQL 17 migrations/integration/production-proxy regression
+- Compose configuration validation and isolated Docker runtime smoke
+
+The hosted runner was Ubuntu 24.04, image `20261004.327.1`, with Docker Compose 2.38.2. Runtime logs confirmed actual API/web image builds, successful migrations, container health, same-origin readiness/HTML/static assets, API package isolation/generated client/native image codec, non-root API/web users, upload-volume persistence, loopback-only web port publication, database-outage recovery, and project-scoped cleanup.
+
+At checkpoint 83, the Compose job parsed the Dokploy configuration but executed only ordinary `compose.yaml`. The later recipe checkpoint below adds isolated secret-lifecycle runtime evidence; credential-volume recovery, ingress/HTTPS, and behavior on the intended deployment host remain outside these checks. The fixture recovery command is local-only and is not part of this hosted workflow. No rendered-browser or production-service check is implied by these passing jobs; the limitations above still apply.
+
+## Verified container and crash-test checkpoint: 2026-10-10
+
+This later **89-commit checkpoint** records additional test evidence, not session completion or coverage of later revisions:
+
+- Local checkpoint: `ba76afb7e8603bad8e2e48c3f01c919aef999c64`
+- Published checkpoint: `cbf372ee07bb2399f704cb5abb77c48edbb77732`
+- Identical tree: `0b329cd9f9e590d6f3d92d39fe023cd173a83340`
+- Exact-head workflow: [Verify ProjectHub, run 38067818658](https://github.com/9MidhunPM/projecthub/actions/runs/38067818658)
+
+The same local command sequence listed above passed again, including fixture recovery, with zero failures or skips. The database integration suite now also kills an owned uploader process with `SIGKILL` after committed reservation, partial file write, and committed READY state. A fresh API process verifies retained quota charges, PENDING privacy/attachment rejection, authorized READY readback, and unchanged unrelated upload data. These tests leave PostgreSQL and the OS running; they do not establish host/power-loss durability, filesystem `fsync`, or every possible crash boundary.
+
+The hosted workflow completed successfully at **16:31 UTC on 2026-10-10**, with all five jobs passing: Node 22 checks/build, Node 24 checks/build, PostgreSQL integration/production-proxy regression, ordinary Compose runtime, and the separate credential-recipe lifecycle. The [recipe job](https://github.com/9MidhunPM/projecthub/actions/runs/38067818658/job/114258956274) built and started the unchanged `compose.dokploy.yaml` under its own disposable project with no published ports. Fixed stage output confirmed:
+
+- Successful real initializer/migrations and healthy database/API/web services
+- PostgreSQL privilege drop, credential-file ownership/modes, and non-root migration/API authentication, including strict wrong-password rejection
+- Internal frontend-proxy readiness and gallery access, without a web credential mount
+- Credential preservation across initializer rerun and database/API recreation
+- Refusal by the real initializer after the stopped synthetic fixture's credential was withheld, without silently replacing it
+- Successful scoped removal of the owned containers, network, and all test volumes
+
+Authentication material and comparison fingerprints stayed within the isolated fixture, persisted only in its disposable volumes, and were never emitted in test output. This was an isolated Compose recipe exercise. Real Dokploy network rewriting, ingress/TLS, secure-cookie behavior through that ingress, automatic deployment, host capacity, credential-volume restoration/rotation, production recovery, and rendered-browser behavior remain unverified. The fixture recovery command remains local-only; no deployment or production action was performed.

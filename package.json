@@ -7,17 +7,24 @@
     "apps/web"
   ],
   "engines": {
-    "node": ">=22 <25",
+    "node": "^22.22.2 || ^24.15.0",
     "npm": ">=10"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm run dev -w @projecthub/api\" \"npm run dev -w @projecthub/web\"",
     "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npm run test:ops",
+    "test:unit": "npm test",
+    "test:ops": "node scripts/run-tests.cjs ops unit",
+    "test:integration": "npm run test:integration -w @projecthub/api",
+    "test:db": "node scripts/with-test-database.cjs",
+    "test:fullstack": "node --test --test-concurrency=1 scripts/test/fullstack.integration.test.cjs",
+    "security:audit": "node scripts/audit-dependencies.cjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:generate": "npm run prisma:generate -w @projecthub/api",
     "db:migrate": "npm run db:migrate -w @projecthub/api",
-    "db:seed": "npm run db:seed -w @projecthub/api"
+    "db:seed": "npm run db:seed -w @projecthub/api",
+    "test:restore": "node scripts/with-test-database.cjs node --test --test-concurrency=1 scripts/test/recovery.integration.test.cjs"
   },
   "devDependencies": {
     "concurrently": "9.2.1"

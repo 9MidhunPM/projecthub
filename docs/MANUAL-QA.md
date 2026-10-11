@@ -48,7 +48,9 @@ Run against an isolated database with fictional data. Record actual pass/fail an
 ## Operations
 - [ ] Fresh migrations and fictional seed succeed on a clean PostgreSQL database.
 - [ ] Restart API/web and confirm DB records and screenshots persist.
-- [ ] Production build starts; `/api/health` works via frontend proxy.
+- [ ] Production standalone build serves HTML, JavaScript/CSS, and public assets; `/api/health/ready` works through the frontend proxy and fails clearly when the database is unavailable.
+- [ ] `/api/health` remains available as liveness, while container readiness waits for the database and successful migrations.
+- [ ] API responses are not cached across users; private screenshots stay `private, no-store`; frontend HTML has expected browser security headers.
 - [ ] Approved HTTPS staging has secure session cookies and exact WEB_ORIGIN.
 - [ ] Backup and restore both database and upload volume on isolated infrastructure.
 

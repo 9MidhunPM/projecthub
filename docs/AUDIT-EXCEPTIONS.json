@@ -1,0 +1,46 @@
+{
+  "reviewedAt": "2026-10-10",
+  "documentation": "docs/DEPENDENCY-AUDIT.md",
+  "exceptions": [
+    {
+      "package": "deepmerge-ts",
+      "advisory": "https://github.com/advisories/GHSA-ggr8-5vv4-36mx",
+      "severity": "high",
+      "nodes": { "node_modules/deepmerge-ts": "7.1.5" },
+      "expires": "2026-11-09",
+      "reason": "Prisma CLI configuration loading merges trusted operator-controlled JavaScript; no application request reaches this loader. The available upstream fix is a major upgrade requiring compatibility review."
+    },
+    {
+      "package": "postcss",
+      "advisory": "https://github.com/advisories/GHSA-qx2v-qp2m-jg93",
+      "severity": "moderate",
+      "nodes": { "node_modules/next/node_modules/postcss": "8.4.31" },
+      "expires": "2026-11-09",
+      "reason": "Next compiles repository-controlled CSS; ProjectHub accepts no user CSS. The affected nested pin is tracked until a verified compatible Next upgrade replaces it."
+    },
+    {
+      "package": "postcss",
+      "advisory": "https://github.com/advisories/GHSA-6g55-p6wh-862q",
+      "severity": "high",
+      "nodes": { "node_modules/next/node_modules/postcss": "8.4.31" },
+      "expires": "2026-11-09",
+      "reason": "CSS and source maps are repository-controlled build inputs; no uploaded CSS or source maps enter the build. A verified Next dependency upgrade is still required."
+    },
+    {
+      "package": "postcss",
+      "advisory": "https://github.com/advisories/GHSA-fxqj-rqcc-2cmp",
+      "severity": "moderate",
+      "nodes": { "node_modules/next/node_modules/postcss": "8.4.31" },
+      "expires": "2026-11-09",
+      "reason": "CSS and source maps are repository-controlled build inputs; no uploaded CSS or source maps enter the build. A verified Next dependency upgrade is still required."
+    },
+    {
+      "package": "postcss",
+      "advisory": "https://github.com/advisories/GHSA-r28c-9q8g-f849",
+      "severity": "high",
+      "nodes": { "node_modules/next/node_modules/postcss": "8.4.31" },
+      "expires": "2026-11-09",
+      "reason": "CSS and source maps are repository-controlled build inputs; no uploaded CSS or source maps enter the build. A verified Next dependency upgrade is still required."
+    }
+  ]
+}
